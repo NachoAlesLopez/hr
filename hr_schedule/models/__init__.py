@@ -18,7 +18,15 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-from . import compute_alerts
-from . import generate_schedules
-from . import restday
-from . import validate_schedule
+from . import hr_schedule
+from . import hr_schedule_weekday
+from . import hr_schedule_alert
+from . import hr_schedule_detail
+from . import hr_schedule_request
+from . import hr_schedule_template
+from . import hr_schedule_template_worktime
+
+from . import hr_contract_init
+from . import hr_contract
+from . import hr_attendance
+from . import hr_employee_termination

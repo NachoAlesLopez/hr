@@ -21,7 +21,7 @@
 
 {
     'name': 'Employee Shift Scheduling',
-    'version': '1.0',
+    'version': '10.0.1.0.0',
     'category': 'Generic Modules/Human Resources',
     'description': """
 Employee Shift Scheduling
@@ -29,7 +29,7 @@ Employee Shift Scheduling
 
 Easily create, manage, and track employee schedules.
     """,
-    'author': "Michael Telahun Makonnen <mmakonnen@gmail.com>,Odoo Community Association (OCA)",
+    'author': "Michael Telahun Makonnen <mmakonnen@gmail.com>,Odoo Community Association (OCA), Ignacio José Alés <nachoaleslopez@gmail.com>",
     'website': 'http://miketelahun.wordpress.com',
     'license': 'AGPL-3',
     'depends': [
@@ -44,20 +44,20 @@ Easily create, manage, and track employee schedules.
         'python': ['dateutil'],
     },
     'data': [
+        'data/hr_schedule_data.xml',
+        'data/alert_rule_data.xml',
+        'data/hr_schedule_workflow.xml',
+        'data/hr_schedule_cron.xml',
+
         'security/ir.model.access.csv',
         'security/ir_rule.xml',
-        'data/hr_schedule_data.xml',
-        'hr_schedule_view.xml',
+
+        'views/hr_schedule_view.xml',
+
         'wizard/validate_schedule_view.xml',
         'wizard/compute_alerts_view.xml',
         'wizard/generate_schedules_view.xml',
-        'wizard/restday_view.xml',
-        'hr_schedule_data.xml',
-        'hr_schedule_workflow.xml',
-        'hr_schedule_cron.xml',
-        'alert_rule_data.xml',
+        'wizard/restday_view.xml'
     ],
-    'test': [
-    ],
-    'installable': False,
+    'installable': True,
 }
