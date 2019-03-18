@@ -1,335 +1,300 @@
 # -*- coding: utf-8 -*-
+from datetime import datetime, timezone, timedelta
+from dateutil import relativedelta
 
-class hr_schedule_alert(orm.Model):
+from odoo import fields, api, models
+from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT
 
+
+class HrScheduleAlert(models.Model):
     _name = 'hr.schedule.alert'
     _description = 'Attendance Exception'
     _inherit = ['mail.thread', 'resource.calendar']
 
-    def _get_employee_id(self, cr, uid, ids, field_name, arg, context=None):
+    @api.multi
+    def _get_employee_id(self):
         res = {}
-        for alrt in self.browse(cr, uid, ids, context=context):
-            if alrt.punch_id:
-                res[alrt.id] = alrt.punch_id.employee_id.id
-            elif alrt.sched_detail_id:
-                res[alrt.id] = alrt.sched_detail_id.schedule_id.employee_id.id
+
+        for alert in self:
+            if alert.punch_id:
+                res[alert.id] = alert.punch_id.employee_id.id
+            elif alert.sched_detail_id:
+                res[alert.id] = alert.sched_detail_id.schedule_id.employee_id.id
             else:
-                res[alrt.id] = False
+                res[alert.id] = False
 
         return res
 
-    _columns = {
-        'name': fields.datetime(
-            'Date and Time',
-            required=True,
-            readonly=True,
-        ),
-        'rule_id': fields.many2one(
-            'hr.schedule.alert.rule',
-            'Alert Rule',
-            required=True,
-            readonly=True,
-        ),
-        'punch_id': fields.many2one(
-            'hr.attendance',
-            'Triggering Punch',
-            readonly=True,
-        ),
-        'sched_detail_id': fields.many2one(
-            'hr.schedule.detail',
-            'Schedule Detail',
-            readonly=True,
-        ),
-        'employee_id': fields.function(
-            _get_employee_id,
-            type='many2one',
-            obj='hr.employee',
-            method=True,
-            store=True,
-            string='Employee',
-            readonly=True,
-        ),
-        'department_id': fields.related(
-            'employee_id',
-            'department_id',
-            type='many2one',
-            store=True,
-            relation='hr.department',
-            string='Department',
-            readonly=True,
-        ),
-        'severity': fields.related(
-            'rule_id',
-            'severity',
-            type='char',
-            string='Severity',
-            store=True,
-            readonly=True,
-        ),
-        'state': fields.selection(
-            [
-                ('unresolved', 'Unresolved'),
-                ('resolved', 'Resolved'),
-            ],
-            'State',
-            readonly=True,
-        ),
-    }
-    _defaults = {
-        'state': 'unresolved',
-    }
-
-    def _rec_message(self, cr, uid, ids, context=None):
-        return _('Duplicate Record!')
+    name = fields.Datetime(
+        string='Date and Time',
+        required=True,
+        readonly=True
+    )
+    rule_id = fields.Many2one(
+        comodel_name='hr.schedule.alert.rule',
+        string='Alert Rule',
+        required=True,
+        readonly=True
+    )
+    punch_id = fields.Many2one(
+        comodel_name='hr.attendance',
+        string='Triggering Punch',
+        readonly=True
+    )
+    sched_detail_id = fields.Many2one(
+        comodel_name='hr.schedule.detail',
+        string='Schedule Detail',
+        readonly=True,
+    )
+    employee_id = fields.Many2one(
+        comodel_name='hr.employee',
+        compute="_get_employee_id",
+        string='Employee',
+        store=True
+    )
+    department_id = fields.Many2one(
+        comodel_name='hr.department',
+        string='Department',
+        related='employee_id.department_id',
+        store=True,
+        readonly=True
+    )
+    severity = fields.Char(
+        string='Severity',
+        related='rule_id.severity',
+        store=True,
+        readonly=True
+    )
+    state = fields.Selection(
+        selection=[
+            ('unresolved', 'Unresolved'),
+            ('resolved', 'Resolved'),
+        ],
+        string='State',
+        readonly=True,
+        default='unresolved'
+    )
 
     _sql_constraints = [
         ('all_unique', 'UNIQUE(punch_id,sched_detail_id,name,rule_id)',
-         _rec_message),
+         'Duplicate Record!'),
     ]
-    _track = {
-        'state': {
-            'hr_schedule.mt_alert_resolved': (
-                lambda self, r, u, obj, ctx=None: obj['state'] == 'resolved'
-            ),
-            'hr_schedule.mt_alert_unresolved': (
-                lambda self, r, u, obj, ctx=None: obj['state'] == 'unresolved'
-            ),
-        },
-    }
 
-    def check_for_alerts(self, cr, uid, context=None):
-        """Check the schedule detail and attendance records for
+    def check_for_alerts(self):
+        """
+        Check the schedule detail and attendance records for
         yesterday against the scheduling/attendance alert rules.
         If any rules match create a record in the database.
         """
 
-        dept_obj = self.pool.get('hr.department')
+        department_obj = self.pool.get('hr.department')
         detail_obj = self.pool.get('hr.schedule.detail')
         attendance_obj = self.pool.get('hr.attendance')
         rule_obj = self.pool.get('hr.schedule.alert.rule')
+        user = self.env.user
 
         # TODO - Someone who cares about DST should fix ths
         #
-        data = self.pool.get('res.users').read(
-            cr, uid, uid, ['tz'], context=context)
-        dtToday = datetime.strptime(
-            datetime.now().strftime('%Y-%m-%d') + ' 00:00:00',
-            '%Y-%m-%d %H:%M:%S')
-        lcldtToday = timezone(data['tz'] and data['tz'] or 'UTC').localize(
-            dtToday, is_dst=False)
-        utcdtToday = lcldtToday.astimezone(utc)
-        utcdtYesterday = utcdtToday + relativedelta(days=-1)
-        strToday = utcdtToday.strftime('%Y-%m-%d %H:%M:%S')
-        strYesterday = utcdtYesterday.strftime('%Y-%m-%d %H:%M:%S')
+        data = user.tz
+        dt_today = \
+            datetime.strptime(
+                datetime.now().strftime('%Y-%m-%d') + ' 00:00:00',
+                '%Y-%m-%d %H:%M:%S'
+            )
+        local_dt_today = \
+            timezone(
+                data['tz'] and data['tz'] or 'UTC'
+            ).localize(dt_today, is_dst=False)
+        utc_dt_today = local_dt_today.astimezone(timezone.utc)
+        utd_dt_yesterday = utc_dt_today + relativedelta(days=-1)
+        date_str_today = utc_dt_today.strftime('%Y-%m-%d %H:%M:%S')
+        date_str_yesterday = utd_dt_yesterday.strftime('%Y-%m-%d %H:%M:%S')
 
-        dept_ids = dept_obj.search(cr, uid, [], context=context)
-        for dept in dept_obj.browse(cr, uid, dept_ids, context=context):
-            for employee in dept.member_ids:
-
+        departments = department_obj.search([])
+        for department in departments:
+            for employee in department.member_ids:
                 # Get schedule and attendance records for the employee for the
                 # day
                 #
-                sched_detail_ids = detail_obj.search(
-                    cr, uid, [
-                        ('schedule_id.employee_id', '=', employee.id),
-                        '&',
-                        ('date_start', '>=', strYesterday),
-                        ('date_start', '<', strToday),
-                    ],
-                    order='date_start',
-                    context=context
-                )
-                attendance_ids = attendance_obj.search(
-                    cr, uid, [
-                        ('employee_id', '=', employee.id),
-                        '&',
-                        ('name', '>=', strYesterday),
-                        ('name', '<', strToday),
-                    ],
-                    order='name',
-                    context=context
-                )
+                schedule_details = detail_obj.search([
+                    ('schedule_id.employee_id', '=', employee.id),
+                    '&',
+                    ('date_start', '>=', date_str_yesterday),
+                    ('date_start', '<', date_str_today),
+                ], order='date_start')
+                attendances = attendance_obj.search([
+                    ('employee_id', '=', employee.id),
+                    '&',
+                    ('name', '>=', date_str_yesterday),
+                    ('name', '<', date_str_today),
+                ], order='name')
 
                 # Run the schedule and attendance records against each active
                 # rule, and create alerts for each result returned.
                 #
-                rule_ids = rule_obj.search(
-                    cr, uid, [('active', '=', True)], context=context)
-                for rule in rule_obj.browse(
-                        cr, uid, rule_ids, context=context):
+                rules = rule_obj.search([('active', '=', True)])
+                for rule in rules:
                     res = rule_obj.check_rule(
-                        cr, uid, rule, detail_obj.browse(
-                            cr, uid, sched_detail_ids, context=context),
-                        attendance_obj.browse(
-                            cr, uid, attendance_ids, context=context),
-                        context=context
+                        rule, schedule_details, attendances
                     )
 
-                    for strdt, attendance_id in res['punches']:
+                    for str_attendance_date, attendance in res['punches']:
                         # skip if it has already been triggered
-                        ids = self.search(
-                            cr, uid, [
-                                ('punch_id', '=', attendance_id),
-                                ('rule_id', '=', rule.id),
-                                ('name', '=', strdt),
-                            ], context=context)
-                        if len(ids) > 0:
+                        alerts = self.search([
+                            ('punch_id', '=', attendance.id),
+                            ('rule_id', '=', rule.id),
+                            ('name', '=', str_attendance_date),
+                        ])
+
+                        if len(alerts) > 0:
                             continue
 
-                        self.create(
-                            cr, uid, {
-                                'name': strdt,
-                                'rule_id': rule.id,
-                                'punch_id': attendance_id,
-                            }, context=context
-                        )
+                        self.create({
+                            'name': str_attendance_date,
+                            'rule_id': rule.id,
+                            'punch_id': attendance,
+                        })
 
-                    for strdt, detail_id in res['schedule_details']:
+                    for str_attendance_date, detail_id in \
+                            res['schedule_details']:
                         # skip if it has already been triggered
-                        ids = self.search(
-                            cr, uid, [
-                                ('sched_detail_id', '=', detail_id),
-                                ('rule_id', '=', rule.id),
-                                ('name', '=', strdt),
-                            ], context=context)
-                        if len(ids) > 0:
+                        alerts = self.search([
+                            ('sched_detail_id', '=', detail_id),
+                            ('rule_id', '=', rule.id),
+                            ('name', '=', str_attendance_date),
+                        ])
+
+                        if len(alerts) > 0:
                             continue
 
-                        self.create(
-                            cr, uid, {
-                                'name': strdt,
-                                'rule_id': rule.id,
-                                'sched_detail_id': detail_id,
-                            }, context=context
-                        )
+                        self.create({
+                            'name': str_attendance_date,
+                            'rule_id': rule.id,
+                            'sched_detail_id': detail_id,
+                        })
 
-    def _get_normalized_attendance(
-            self, cr, uid, employee_id, utcdt, att_ids, context=None):
-
-        att_obj = self.pool.get('hr.attendance')
-        attendances = att_obj.browse(cr, uid, att_ids, context=context)
-        strToday = utcdt.strftime(OE_DTFORMAT)
+    @api.model
+    def _get_normalized_attendance(self, employee, utc_dt, attendances):
+        attendance_obj = self.env['hr.attendance']
+        str_date_today = utc_dt.strftime(DEFAULT_SERVER_DATETIME_FORMAT)
 
         # If the first punch is a punch-out then get the corresponding punch-in
         # from the previous day.
         #
         if len(attendances) > 0 and attendances[0].action != 'sign_in':
-            strYesterday = (utcdt - timedelta(days=1)).strftime(OE_DTFORMAT)
-            ids = att_obj.search(
-                cr, uid, [
-                    ('employee_id', '=', employee_id),
-                    '&',
-                    ('name', '>=', strYesterday),
-                    ('name', '<', strToday),
-                ], order='name', context=context)
-            att2 = att_obj.browse(cr, uid, ids, context=context)
-            if len(att2) > 0 and att2[-1].action == 'sign_in':
-                att_ids = [att2[-1].id] + att_ids
+            str_date_yesterday = (
+                utc_dt - timedelta(days=+1)
+            ).strftime(DEFAULT_SERVER_DATETIME_FORMAT)
+            yesterday_attendances = attendance_obj.search([
+                ('employee', '=', employee),
+                '&',
+                ('name', '>=', str_date_yesterday),
+                ('name', '<', str_date_today)
+            ])
+
+            if len(yesterday_attendances) > 0 and yesterday_attendances[-1].action == 'sign_in':
+                attendances = [yesterday_attendances[-1].id] + attendances
             else:
-                att_ids = att_ids[1:]
+                attendances = attendances[1:]
 
         # If the last punch is a punch-in then get the corresponding punch-out
         # from the next day.
         #
         if len(attendances) > 0 and attendances[-1].action != 'sign_out':
-            strTommorow = (utcdt + timedelta(days=1)).strftime(OE_DTFORMAT)
-            ids = att_obj.search(
-                cr, uid, [
-                    ('employee_id', '=', employee_id),
-                    '&',
-                    ('name', '>=', strToday),
-                    ('name', '<', strTommorow),
-                ], order='name', context=context)
-            att2 = att_obj.browse(cr, uid, ids, context=context)
-            if len(att2) > 0 and att2[0].action == 'sign_out':
-                att_ids = att_ids + [att2[0].id]
+            str_tomorrow = (
+                utc_dt + timedelta(days=1)
+            ).strftime(DEFAULT_SERVER_DATETIME_FORMAT)
+            tomorrow_attendances = attendance_obj.search([
+                ('employee', '=', employee),
+                '&',
+                ('name', '>=', str_date_today),
+                ('name', '<', str_tomorrow)
+            ])
+
+            if len(tomorrow_attendances) > 0 and tomorrow_attendances[0].action == 'sign_out':
+                attendances = attendances + [tomorrow_attendances[0].id]
             else:
-                att_ids = att_ids[:-1]
+                attendances = attendances[:-1]
 
-        return att_ids
+        return attendances
 
-    def compute_alerts_by_employee(
-            self, cr, uid, employee_id, strDay, context=None):
-        """Compute alerts for employee on specified day."""
-
-        detail_obj = self.pool.get('hr.schedule.detail')
-        atnd_obj = self.pool.get('hr.attendance')
-        rule_obj = self.pool.get('hr.schedule.alert.rule')
+    @api.model
+    def compute_alerts_by_employee(self, employee, str_date):
+        """
+        Compute alerts for employee on specified day.
+        """
+        detail_obj = self.env['hr.schedule.detail']
+        atnd_obj = self.env['hr.attendance']
+        rule_obj = self.env['hr.schedule.alert.rule']
+        user = self.env.user
 
         # TODO - Someone who cares about DST should fix ths
         #
-        data = self.pool.get('res.users').read(
-            cr, uid, uid, ['tz'], context=context)
-        dt = datetime.strptime(strDay + ' 00:00:00', '%Y-%m-%d %H:%M:%S')
-        lcldt = timezone(data['tz']).localize(dt, is_dst=False)
-        utcdt = lcldt.astimezone(utc)
-        utcdtNextDay = utcdt + relativedelta(days=+1)
-        strToday = utcdt.strftime('%Y-%m-%d %H:%M:%S')
-        strNextDay = utcdtNextDay.strftime('%Y-%m-%d %H:%M:%S')
+        data = user.tz
+        dt = datetime.strptime(str_date + ' 00:00:00', '%Y-%m-%d %H:%M:%S')
+        local_dt = timezone(data['tz']).localize(dt, is_dst=False)
+        utc_dt = local_dt.astimezone(timezone.utc)
+        utc_dt_next_day = utc_dt + relativedelta(days=+1)
+        str_today = utc_dt.strftime('%Y-%m-%d %H:%M:%S')
+        str_next_day = utc_dt_next_day.strftime('%Y-%m-%d %H:%M:%S')
 
         # Get schedule and attendance records for the employee for the day
         #
-        sched_detail_ids = detail_obj.search(
-            cr, uid, [('schedule_id.employee_id', '=', employee_id),
-                      '&',
-                      ('day', '>=', strToday),
-                      ('day', '<', strNextDay),
-                      ],
-            order='date_start',
-            context=context)
-        attendance_ids = atnd_obj.search(
-            cr, uid, [('employee_id', '=', employee_id),
-                      '&',
-                      ('name', '>=', strToday),
-                      ('name', '<', strNextDay),
-                      ],
-            order='name',
-            context=context)
-        attendance_ids = self._get_normalized_attendance(
-            cr, uid, employee_id, utcdt,
-            attendance_ids, context)
+        schedule_details = detail_obj.search([
+            ('schedule_id.employee', '=', employee.id),
+            '&',
+            ('day', '>=', str_today),
+            ('day', '<', str_next_day),
+        ], order='date_start')
+        attendances = atnd_obj.search([
+            ('employee', '=', employee.id),
+            '&',
+            ('name', '>=', str_today),
+            ('name', '<', str_next_day),
+        ], order='name')
+
+        attendances = self._get_normalized_attendance(
+            employee, utc_dt, attendances
+        )
 
         # Run the schedule and attendance records against each active rule, and
         # create alerts for each result returned.
         #
-        rule_ids = rule_obj.search(
-            cr, uid, [('active', '=', True)], context=context)
-        for rule in rule_obj.browse(cr, uid, rule_ids, context=context):
+        rules = rule_obj.search([('active', '=', True)])
+        for rule in rules:
             res = rule_obj.check_rule(
-                cr, uid, rule,
-                detail_obj.browse(cr, uid, sched_detail_ids, context=context),
-                atnd_obj.browse(cr, uid, attendance_ids, context=context),
-                context=context
+                rule, schedule_details, attendances
             )
 
-            for strdt, attendance_id in res['punches']:
+            for str_dt, attendance in res['punches']:
                 # skip if it has already been triggered
-                ids = self.search(cr, uid, [('punch_id', '=', attendance_id),
-                                            ('rule_id', '=', rule.id),
-                                            ('name', '=', strdt),
-                                            ],
-                                  context=context)
+                ids = self.search([
+                    ('punch_id', '=', attendance.id),
+                    ('rule_id', '=', rule.id),
+                    ('name', '=', str_dt),
+                ])
                 if len(ids) > 0:
                     continue
 
-                self.create(cr, uid, {'name': strdt,
-                                      'rule_id': rule.id,
-                                      'punch_id': attendance_id},
-                            context=context)
+                self.create({
+                    'name': str_dt,
+                    'rule_id': rule.id,
+                    'punch_id': attendance
+                })
 
-            for strdt, detail_id in res['schedule_details']:
+            for str_dt, detail_id in res['schedule_details']:
                 # skip if it has already been triggered
-                ids = self.search(
-                    cr, uid, [('sched_detail_id', '=', detail_id),
-                              ('rule_id', '=', rule.id),
-                              ('name', '=', strdt),
-                              ],
-                    context=context)
+                ids = self.search([
+                    ('sched_detail_id', '=', detail_id),
+                    ('rule_id', '=', rule.id),
+                    ('name', '=', str_dt)
+                ])
                 if len(ids) > 0:
                     continue
 
-                self.create(cr, uid, {'name': strdt,
-                                      'rule_id': rule.id,
-                                      'sched_detail_id': detail_id},
-                            context=context)
+                self.create({
+                    'name': str_dt,
+                    'rule_id': rule.id,
+                    'sched_detail_id': detail_id
+                })
 

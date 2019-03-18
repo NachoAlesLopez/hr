@@ -18,58 +18,44 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-
-from openerp import netsvc
-
-from openerp.osv import fields, orm
-
-import logging
-_logger = logging.getLogger(__name__)
+from odoo import fields, api, models
+from odoo.workflow import trg_validate
 
 
-class department_selection(orm.TransientModel):
-
+class DepartmentSelection(models.TransientModel):
     _name = 'hr.schedule.validate.departments'
     _description = 'Department Selection for Validation'
 
-    _columns = {
-        'department_ids': fields.many2many(
-            'hr.department',
-            'hr_department_group_rel',
-            'employee_id',
-            'department_id',
-            'Departments',
-        ),
-    }
+    department_ids = fields.Many2many(
+        comodel_name='hr.department',
+        relation='hr_department_group_rel',
+        column1='employee_id',
+        column2='department_id',
+        string='Departments'
+    )
 
-    def view_schedules(self, cr, uid, ids, context=None):
-
-        data = self.read(cr, uid, ids, context=context)[0]
+    @api.multi
+    def view_schedules(self):
         return {
             'view_type': 'form',
             'view_mode': 'tree,form',
             'res_model': 'hr.schedule',
             'domain': [
-                ('department_id', 'in', data['department_ids']),
+                ('department_id', 'in', self.department_ids.ids),
                 ('state', 'in', ['draft']),
             ],
             'type': 'ir.actions.act_window',
-            'target': 'new',
-            'nodestroy': True,
-            'context': context,
+            'target': 'new'
         }
 
-    def do_validate(self, cr, uid, ids, context=None):
+    @api.multi
+    def do_validate(self):
+        schedules = self.env['hr.schedule'].search([
+            ('department_id', 'in', self.department_ids.ids)
+        ])
 
-        wkf_service = netsvc.LocalService('workflow')
-        data = self.read(cr, uid, ids, context=context)[0]
-        sched_ids = self.pool.get('hr.schedule').search(
-            cr, uid, [
-                ('department_id', 'in', data['department_ids'])
-            ], context=context
-        )
-        for sched_id in sched_ids:
-            wkf_service.trg_validate(
-                uid, 'hr.schedule', sched_id, 'signal_validate', cr)
+        for sched_id in schedules:
+            trg_validate(self.env.uid, 'hr.schedule', sched_id,
+                         'signal_validate', cr)
 
         return {'type': 'ir.actions.act_window_close'}

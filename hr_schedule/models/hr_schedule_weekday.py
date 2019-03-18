@@ -1,18 +1,14 @@
 # -*- coding: utf-8 -*-
+from odoo import fields, models
 
-class week_days(orm.Model):
 
+class HrWeekDay(models.Model):
     _name = 'hr.schedule.weekday'
     _description = 'Days of the Week'
 
-    _columns = {
-        'name': fields.char(
-            'Name',
-            size=64,
-            required=True,
-        ),
-        'sequence': fields.integer(
-            'Sequence',
-            required=True,
-        ),
-    }
+    name = fields.Char(
+        string='Name', size=64, required=True
+    )
+    sequence = fields.Integer(
+        string='Sequence', required=True
+    )

@@ -18,23 +18,15 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dateutil import relativedelta
 from pytz import utc
 
 from odoo import fields, api, models, _
 from odoo.exceptions import UserError
 from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT
+from odoo.workflow import trg_validate
 
-DAYOFWEEK_SELECTION = [
-    ('0', 'Monday'),
-    ('1', 'Tuesday'),
-    ('2', 'Wednesday'),
-    ('3', 'Thursday'),
-    ('4', 'Friday'),
-    ('5', 'Saturday'),
-    ('6', 'Sunday'),
-]
 
 class HrSchedule(models.Model):
     _name = 'hr.schedule'
@@ -55,8 +47,8 @@ class HrSchedule(models.Model):
 
     company_id = fields.Many2one(
         comodel_name='res.company', string='Company', readonly=True,
-        default=lambda self: self.env['res.company']
-            ._company_default_get('hr.schedule'),
+        default=lambda self:
+            self.env['res.company']._company_default_get('hr.schedule'),
     )
     employee_id = fields.Many2one(
         comodel_name='hr.employee', string='Employee', required=True,
@@ -69,7 +61,7 @@ class HrSchedule(models.Model):
     detail_ids = fields.One2many(
         comodel_name='hr.schedule.detail', inverse_name='schedule_id',
         string='Schedule Detail', readonly=True,
-        states={'draft': [('readonly', False)]}
+        states={'draft': [('readonly', False)]}, ondelete="cascade"
     )
     date_start = fields.Date(
         string='Start Date', required=True, readonly=True,
@@ -118,7 +110,7 @@ class HrSchedule(models.Model):
 
     @api.multi
     @api.constrains('date_start', 'date_end')
-    def _check_overlapping_schedules(self):
+    def _check_overlapping_schedules(self): # Migrado
         for schedule in self:
             schedules = self.env['hr.schedule'].search([
                 ('date_start', '<=', schedule.date_start),
@@ -130,41 +122,45 @@ class HrSchedule(models.Model):
             else:
                 return False
 
-    @api.multi  # ?
-    def get_rest_days(self, employee_id, datetime):
-        """If the rest day(s) have been explicitly specified that's
-        what is returned, otherwise a guess is returned based on the
-        week days that are not scheduled. If an explicit rest day(s)
-        has not been specified an empty list is returned. If it is able
-        to figure out the rest days it will return a list of week day
-        integers with Monday being 0.
-        """
-        day = datetime.strftime()
-        schedule = self.env['hr.schedule'].search([
-            ('employee_id', '=', employee_id.id),
-            ('date_start', '<=', day),
-            ('date_end', '>=', day),
-        ])
+    # TODO: Sin usar????
+    # @api.multi  # ?
+    # def get_rest_days(self, employee_id, dt):
+    #     """
+    #     If the rest day(s) have been explicitly specified that's
+    #     what is returned, otherwise a guess is returned based on the
+    #     week days that are not scheduled. If an explicit rest day(s)
+    #     has not been specified an empty list is returned. If it is able
+    #     to figure out the rest days it will return a list of week day
+    #     integers with Monday being 0.
+    #     """
+    #     day = dt.strftime()
+    #     schedule = self.env['hr.schedule'].search([
+    #         ('employee_id', '=', employee_id.id),
+    #         ('date_start', '<=', day),
+    #         ('date_end', '>=', day),
+    #     ])
+    #
+    #     if not schedule:
+    #         return None
+    #     elif len(schedule) > 1:
+    #         raise UserError(
+    #             _('Employee has a scheduled date in more than one schedule.')
+    #         )
+    #
+    #     # If the day is in the middle of the week get the start of the week
+    #     if dt.weekday() == 0:
+    #         week_start = dt.strftime(DEFAULT_SERVER_DATETIME_FORMAT)
+    #     else:
+    #         week_start = \
+    #             (dt + relativedelta(days=-datetime.weekday()))\
+    #                 .strftime(DEFAULT_SERVER_DATETIME_FORMAT)
+    #
+    #     return self.get_rest_days_by_id(week_start)
 
-        if not schedule:
-            return None
-        elif len(schedule) > 1:
-            raise UserError(
-                _('Employee has a scheduled date in more than one schedule.')
-            )
-
-        # If the day is in the middle of the week get the start of the week
-        if datetime.weekday() == 0:
-            week_start = datetime.strftime(DEFAULT_SERVER_DATETIME_FORMAT)
-        else:
-            week_start = (datetime + relativedelta(days=-datetime.weekday()))\
-                .strftime(DEFAULT_SERVER_DATETIME_FORMAT)
-
-        return self.get_rest_days_by_id(week_start)
-
-    @api.one  # ?
+    @api.multi
     def get_rest_days_by_id(self, week_start):
-        """If the rest day(s) have been explicitly specified that's
+        """
+        If the rest day(s) have been explicitly specified that's
         what is returned, otherwise a guess is returned based on the
         week days that are not scheduled. If an explicit rest day(s)
         has not been specified an empty list is returned. If it is
@@ -175,106 +171,114 @@ class HrSchedule(models.Model):
 
         # Set the boundaries of the week (i.e- start of current week and start
         # of next week)
-        schedule = self
-        if not schedule.detail_ids:
-            return res
+        for schedule in self:
+            if not schedule.detail_ids:
+                return res
 
-        dt_first_day = \
-            datetime.strptime(schedule.detail_ids[0].date_start,
-                              DEFAULT_SERVER_DATETIME_FORMAT)
-        date_start = \
-            dt_first_day.strftime(DEFAULT_SERVER_DATETIME_FORMAT) < week_start \
-            and week_start + ' ' + dt_first_day.strftime('%H:%M:%S') or \
-            dt_first_day.strftime(DEFAULT_SERVER_DATETIME_FORMAT)
-        dt_next_week = \
-            datetime.strptime(
-                date_start, DEFAULT_SERVER_DATETIME_FORMAT
-            ) + relativedelta(weeks=+1)
+            first_detail_start = schedule.detail_ids[0].date_start
 
-        # Determine the appropriate rest day list to use
-        #
-        restday_ids = False
-        date_scheduled_start = \
-            datetime.strptime(
-                schedule.date_start, DEFAULT_SERVER_DATETIME_FORMAT
-            ).date()
-        date_week_start = \
-            datetime.strptime(week_start, DEFAULT_SERVER_DATETIME_FORMAT).date()
+            dt_first_day = \
+                datetime.strptime(first_detail_start,
+                                  DEFAULT_SERVER_DATETIME_FORMAT)
+            date_start = \
+                first_detail_start < week_start and \
+                week_start + ' ' + dt_first_day.strftime('%H:%M:%S') or \
+                dt_first_day.strftime(DEFAULT_SERVER_DATETIME_FORMAT)
+            dt_next_week = \
+                datetime.strptime(
+                    date_start, DEFAULT_SERVER_DATETIME_FORMAT
+                ) + relativedelta(weeks=+1)
 
-        if date_week_start == date_scheduled_start:
-            restday_ids = schedule.restday_ids1
-        elif date_week_start == date_scheduled_start + relativedelta(days=+7):
-            restday_ids = schedule.restday_ids2
-        elif date_week_start == date_scheduled_start + relativedelta(days=+14):
-            restday_ids = schedule.restday_ids3
-        elif date_week_start == date_scheduled_start + relativedelta(days=+21):
-            restday_ids = schedule.restday_ids4
-        elif date_week_start == date_scheduled_start + relativedelta(days=+28):
-            restday_ids = schedule.restday_ids5
+            # Determine the appropriate rest day list to use
+            #
+            restday_ids = False
+            date_scheduled_start = \
+                datetime.strptime(
+                    schedule.date_start, DEFAULT_SERVER_DATETIME_FORMAT
+                ).date()
+            date_week_start = \
+                datetime.strptime(week_start, DEFAULT_SERVER_DATETIME_FORMAT)\
+                    .date()
+            date_week = relativedelta(days=+7)
 
-        # If there is explicit rest day data use it, otherwise try to guess
-        # based on which days are not scheduled.
-        #
-        if restday_ids:
-            res = [rd.sequence for rd in restday_ids]
-        else:
-            weekdays = ['0', '1', '2', '3', '4', '5', '6']
-            scheddays = []
+            if date_week_start == date_scheduled_start:
+                restday_ids = schedule.restday_ids1
+            elif date_week_start == date_scheduled_start + date_week:
+                restday_ids = schedule.restday_ids2
+            elif date_week_start == date_scheduled_start + date_week * 2:
+                restday_ids = schedule.restday_ids3
+            elif date_week_start == date_scheduled_start + date_week * 3:
+                restday_ids = schedule.restday_ids4
+            elif date_week_start == date_scheduled_start + date_week * 4:
+                restday_ids = schedule.restday_ids5
 
-            for detail in schedule.detail_ids:
-                # Make sure the date we're examining isn't in the previous week
-                # or the next one
-                detail_date_start = datetime.strptime(
-                    detail.date_start, DEFAULT_SERVER_DATETIME_FORMAT
-                )
+            # If there is explicit rest day data use it, otherwise try to guess
+            # based on which days are not scheduled.
+            #
+            if restday_ids:
+                res = [rd.sequence for rd in restday_ids]
+            else:
+                weekdays = ['0', '1', '2', '3', '4', '5', '6']
+                scheddays = []
 
-                if detail.date_start < week_start or \
-                        detail_date_start >= dt_next_week:
-                    continue
+                for detail in schedule.detail_ids:
+                    # Make sure the date we're examining isn't in the previous week
+                    # or the next one
+                    detail_date_start = datetime.strptime(
+                        detail.date_start, DEFAULT_SERVER_DATETIME_FORMAT
+                    )
 
-                if detail.dayofweek not in scheddays:
-                    scheddays.append(detail.dayofweek)
+                    if detail.date_start < week_start or \
+                            detail_date_start >= dt_next_week:
+                        continue
 
-            res = [int(d) for d in weekdays if d not in scheddays]
-            # If there are no schedule.details return nothing instead of *ALL*
-            # the days in the week
-            if len(res) == 7:
-                res = []
+                    if detail.dayofweek not in scheddays:
+                        scheddays.append(detail.dayofweek)
+
+                res = [int(d) for d in weekdays if d not in scheddays]
+                # If there are no schedule.details return nothing instead of
+                # *ALL* the days in the week
+                if len(res) == 7:
+                    res = []
 
         return res
 
-    @api.onchange('employee_id', 'date_start')  # ?
-    def onchange_employee_start_date(self, employee, date_start):
-        date_start = False
+    @api.one
+    @api.onchange('employee_id', 'date_start')
+    def onchange_employee_start_date(self):
+        res = {}
 
         if self.date_start:
             date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
             # The schedule must start on a Monday
             if date_start.weekday() != 0:
-                self.date_start = False
-                self.date_end = False
+                res['date_start'] = False
+                res['date_end'] = False
             else:
                 date_end = date_start + relativedelta(days=+6)
-                self.date_end = date_end
+                res['date_end'] = date_end
 
-        if self.employee.name:
-            self.name = self.employee.name
+        if self.employee_id.name:
+            res['name'] = self.employee_id.name
 
             if date_start:
-                self.name = self.name + ': ' + date_start.strftime('%Y-%m-%d') \
-                            + ' Wk ' + str(date_start.isocalendar()[1])
+                res['name'] = self.name + ': ' + date_start.strftime('%Y-%m-%d')\
+                    + ' Wk ' + str(date_start.isocalendar()[1])
 
-        if self.employee.contract_id:
-            contract = self.employee.mapped('contract_id')
+        if self.employee_id.contract_id:
+            contract = self.employee_id.mapped('contract_id')
 
             if contract.schedule_template_id:
-                self.template_id = contract[0]['schedule_template_id']
+                res['template_id'] = contract[0]['schedule_template_id']
 
+        self.write(res)
+
+    @api.multi
     def delete_details(self):
         self.write({'detail_ids': [6, 0, 0]})
 
     @api.multi
-    def add_restdays(self, field_name, rest_days):
+    def add_restdays(self, field_name, rest_days=None):
         for schedule in self:
             restday_ids = []
 
@@ -284,7 +288,7 @@ class HrSchedule(models.Model):
             else:
                 restday_ids = self.env['hr.schedule.weekday'].search([
                     ('sequence', 'in', rest_days)
-                ])
+                ]).ids
 
             if len(restday_ids) > 0:
                 self.write({
@@ -293,7 +297,7 @@ class HrSchedule(models.Model):
 
     @api.multi
     def create_details(self):
-        leave_obj = self.pool.get('hr.holidays')
+        leave_obj = self.env['hr.holidays']
 
         for schedule in self.filtered(lambda item: item.template_id):
             leaves = []
@@ -320,7 +324,7 @@ class HrSchedule(models.Model):
 
                 leaves.append((utc_dt_from, utc_dt_to))
 
-            user = self.env.uid
+            user = self.env.user
             local_tz = timezone(user.tz)
             schedule_date_iter = \
                 datetime.strptime(schedule.date_start, '%Y-%m-%d').date()
@@ -328,31 +332,31 @@ class HrSchedule(models.Model):
                 datetime.strptime(schedule.date_end, '%Y-%m-%d').date()
             schedule_week_start = schedule_date_iter
             schedule_date_start = schedule_date_iter
+            date_week = relativedelta(days=+7)
 
             while schedule_date_iter <= schedule_date_end:
                 # Enter the rest day(s)
                 #
                 if schedule_date_iter == schedule_date_start:
-                    self.add_restdays(schedule, 'restday_ids1')
-                elif schedule_date_iter == schedule_date_start + \
-                        relativedelta(days=+7):
-                    self.add_restdays(schedule, 'restday_ids2')
-                elif schedule_date_iter == schedule_date_start + \
-                        relativedelta(days=+14):
-                    self.add_restdays(schedule, 'restday_ids3')
-                elif schedule_date_iter == schedule_date_start +\
-                        relativedelta(days=+21):
-                    self.add_restdays(schedule, 'restday_ids4')
-                elif schedule_date_iter == schedule_date_start + \
-                        relativedelta(days=+28):
-                    self.add_restdays(schedule, 'restday_ids5')
+                    self.add_restdays('restday_ids1')
+                elif schedule_date_iter == schedule_date_start + date_week:
+                    self.add_restdays('restday_ids2')
+                elif schedule_date_iter == schedule_date_start + date_week * 2:
+                    self.add_restdays('restday_ids3')
+                elif schedule_date_iter == schedule_date_start + date_week * 3:
+                    self.add_restdays('restday_ids4')
+                elif schedule_date_iter == schedule_date_start + date_week * 4:
+                    self.add_restdays('restday_ids5')
 
-                prevutcdtStart_variable_rara = False
-                prevDayofWeek_variable_rara = False
+                prev_utc_dt_start = False
+                prev_day_of_week = False
+
                 for worktime in schedule.template_id.worktime_ids:
-                    hour, sep, minute = worktime.hour_from.partition(':')
-                    to_hour, sep2, to_minute = worktime.hour_to.partition(':')
-                    if len(sep) == 0 or len(sep2) == 0:
+                    from_hour, from_separator, from_minute = \
+                        worktime.hour_from.partition(':')
+                    to_hour, to_separator, to_minute = \
+                        worktime.hour_to.partition(':')
+                    if len(from_separator) == 0 or len(to_separator) == 0:
                         raise UserError(
                             _('The time should be entered as HH:MM')
                         )
@@ -360,11 +364,13 @@ class HrSchedule(models.Model):
                     # TODO - Someone affected by DST should fix this
                     #
                     dt_start = datetime.strptime(
-                        schedule_week_start.strftime('%Y-%m-%d') + ' ' + hour +
-                        ':' + minute + ':00', '%Y-%m-%d %H:%M:%S'
+                        schedule_week_start.strftime('%Y-%m-%d') + ' ' +
+                        from_hour + ':' + from_minute + ':00',
+                        '%Y-%m-%d %H:%M:%S'
                     )
                     local_dt_start = local_tz.localize(dt_start, is_dst=False)
                     utc_dt_start = local_dt_start.astimezone(utc)
+
                     if worktime.dayofweek != 0:
                         utc_dt_start = \
                             utc_dt_start + \
@@ -376,44 +382,53 @@ class HrSchedule(models.Model):
                     # set the start time based on the difference from the
                     # previous record
                     #
-                    if prevDayofWeek_variable_rara and prevDayofWeek_variable_rara == worktime.dayofweek:
-                        prevHour = prevutcdtStart_variable_rara.strftime('%H')
-                        prevMin = prevutcdtStart_variable_rara.strftime('%M')
-                        curHour = utc_dt_start.strftime('%H')
-                        curMin = utc_dt_start.strftime('%M')
+                    if prev_day_of_week and \
+                            prev_day_of_week == worktime.dayofweek:
+                        prev_hour = prev_utc_dt_start.strftime('%H')
+                        prev_minutes = prev_utc_dt_start.strftime('%M')
+                        current_hour = utc_dt_start.strftime('%H')
+                        current_minutes = utc_dt_start.strftime('%M')
                         delta_seconds = (
-                            datetime.strptime(curHour + ':' + curMin, '%H:%M')
-                            - datetime.strptime(prevHour + ':' + prevMin,
-                                                '%H:%M')).seconds
-                        utc_dt_start = prevutcdtStart_variable_rara + \
+                            datetime.strptime(
+                                current_hour + ':' + current_minutes, '%H:%M'
+                            ) - datetime.strptime(
+                                prev_hour + ':' + prev_minutes, '%H:%M'
+                            )
+                        ).seconds
+                        utc_dt_start = prev_utc_dt_start + \
                                        timedelta(seconds=+delta_seconds)
-                        date_day = prevutcdtStart_variable_rara.astimezone(local_tz).date()
+                        date_day = prev_utc_dt_start.astimezone(local_tz).date()
 
-                    delta_seconds = (datetime.strptime(to_hour + ':' + to_minute,
-                                                       '%H:%M')
-                                     - datetime.strptime(hour + ':' + minute,
-                                                         '%H:%M')).seconds
-                    utcdtEnd = utc_dt_start + timedelta(seconds=+delta_seconds)
+                    delta_seconds = (
+                        datetime.strptime(
+                            to_hour + ':' + to_minute, '%H:%M'
+                        ) - datetime.strptime(
+                            from_hour + ':' + from_minute, '%H:%M'
+                        )
+                    ).seconds
+                    utc_dt_end = utc_dt_start + timedelta(seconds=+delta_seconds)
 
                     # Leave empty holes where there are leaves
                     #
                     _skip = False
                     for utc_dt_from, utc_dt_to in leaves:
-                        if utc_dt_from <= utc_dt_start and utc_dt_to >= utcdtEnd:
+                        if utc_dt_from <= utc_dt_start and \
+                                utc_dt_to >= utc_dt_end:
                             _skip = True
                             break
-                        elif utc_dt_start < utc_dt_from <= utcdtEnd:
-                            if utc_dt_to == utcdtEnd:
+                        elif utc_dt_start < utc_dt_from <= utc_dt_end:
+                            if utc_dt_to == utc_dt_end:
                                 _skip = True
                             else:
-                                utcdtEnd = utc_dt_from + timedelta(seconds=-1)
+                                utc_dt_end = utc_dt_from + timedelta(seconds=-1)
                             break
-                        elif utc_dt_start <= utc_dt_to < utcdtEnd:
-                            if utc_dt_to == utcdtEnd:
+                        elif utc_dt_start <= utc_dt_to < utc_dt_end:
+                            if utc_dt_to == utc_dt_end:
                                 _skip = True
                             else:
                                 utc_dt_start = utc_dt_to + timedelta(seconds=+1)
                             break
+
                     if not _skip:
                         val = {
                             'name': schedule.name,
@@ -421,168 +436,165 @@ class HrSchedule(models.Model):
                             'day': date_day,
                             'date_start': utc_dt_start.strftime(
                                 '%Y-%m-%d %H:%M:%S'),
-                            'date_end': utcdtEnd.strftime(
+                            'date_end': utc_dt_end.strftime(
                                 '%Y-%m-%d %H:%M:%S'),
-                            'schedule_id': sched_id,
+                            'schedule_id': schedule.id,
                         }
-                        self.write(cr, uid, sched_id, {
-                                   'detail_ids': [(0, 0, val)]},
-                                   context=context)
+                        schedule.write({
+                            'detail_ids': [(0, 0, val)]
+                        })
 
-                    prevDayofWeek_variable_rara = worktime.dayofweek
-                    prevutcdtStart_variable_rara = utc_dt_start
+                    prev_day_of_week = worktime.dayofweek
+                    prev_utc_dt_start = utc_dt_start
 
                 schedule_date_iter = schedule_week_start + relativedelta(weeks=+1)
                 schedule_week_start = schedule_date_iter
 
         return True
 
-    def create(self, cr, uid, vals, context=None):
+    @api.model
+    def create(self, vals):
+        result = super(HrSchedule, self).create(vals)
 
-        my_id = super(hr_schedule, self).create(cr, uid, vals, context=context)
+        self.create_details(result.id)
 
-        self.create_details(cr, uid, my_id, context=context)
+        return result
 
-        return my_id
-
-    def create_mass_schedule(self, cr, uid, context=None):
-        """Creates tentative schedules for all employees based on the
+    @api.model
+    def create_mass_schedule(self):
+        """
+        Creates tentative schedules for all employees based on the
         schedule template attached to their contract. Called from the
         scheduler.
         """
 
-        sched_obj = self.pool.get('hr.schedule')
-        ee_obj = self.pool.get('hr.employee')
+        schedule_obj = self.env['hr.schedule']
+        employee_obj = self.env['hr.employee']
+        department_obj = self.env['hr.department']
 
         # Create a two-week schedule beginning from Monday of next week.
         #
         dt = datetime.today()
         days = 7 - dt.weekday()
         dt += relativedelta(days=+days)
-        dStart = dt.date()
-        dEnd = dStart + relativedelta(weeks=+2, days=-1)
+        date_start = dt.date()
+        date_end = date_start + relativedelta(weeks=+2, days=-1)
 
         # Create schedules for each employee in each department
         #
-        dept_ids = self.pool.get('hr.department').search(cr, uid, [],
-                                                         context=context)
-        for dept in self.pool.get('hr.department').browse(cr, uid, dept_ids,
-                                                          context=context):
-            ee_ids = ee_obj.search(cr, uid, [
-                ('department_id', '=', dept.id),
-            ], order="name", context=context)
-            if len(ee_ids) == 0:
+        departments = department_obj.search([])
+        for department in departments:
+            employees = employee_obj.search([
+                ('department_id', '=', department.id),
+            ], order="name")
+
+            if len(employees) == 0:
                 continue
 
-            for ee in ee_obj.browse(cr, uid, ee_ids, context=context):
-
-                if (not ee.contract_id
-                        or not ee.contract_id.schedule_template_id):
+            for employee in employees:
+                if (
+                    not employee.contract_id
+                    or not employee.contract_id.schedule_template_id
+                ):
                     continue
 
-                sched = {
-                    'name': (ee.name + ': ' + dStart.strftime('%Y-%m-%d') +
-                             ' Wk ' + str(dStart.isocalendar()[1])),
-                    'employee_id': ee.id,
-                    'template_id': ee.contract_id.schedule_template_id.id,
-                    'date_start': dStart.strftime('%Y-%m-%d'),
-                    'date_end': dEnd.strftime('%Y-%m-%d'),
+                schedule_vals = {
+                    'name':(
+                            employee.name + ': ' \
+                            + date_start.strftime('%Y-%m-%d') + ' Wk ' \
+                            + str(date_start.isocalendar()[1])
+                            ),
+                    'employee_id': employee.id,
+                    'template_id': employee.contract_id.schedule_template_id.id,
+                    'date_start': date_start.strftime('%Y-%m-%d'),
+                    'date_end': date_end.strftime('%Y-%m-%d'),
                 }
-                sched_obj.create(cr, uid, sched, context=context)
 
-    def deletable(self, cr, uid, sched_id, context=None):
+                schedule_obj.create(schedule_vals)
 
-        sched = self.browse(cr, uid, sched_id, context=context)
-        if sched.state not in ['draft', 'unlocked']:
-            return False
-        for detail in sched.detail_ids:
-            if detail.state not in ['draft', 'unlocked']:
-                return False
+    @api.multi
+    def delete_table(self):
+        is_successful = True
 
-        return True
+        for schedule in self:
+            if schedule.state not in ['draft', 'unlocked']:
+                is_successful = False
+            for detail in schedule.detail_ids:
+                if detail.state not in ['draft', 'unlocked']:
+                    is_successful
 
-    def unlink(self, cr, uid, ids, context=None):
+        return is_successful
 
-        detail_obj = self.pool.get('hr.schedule.detail')
-
-        if isinstance(ids, (int, long)):
-            ids = [ids]
-
-        schedule_ids = []
-        for schedule in self.browse(cr, uid, ids, context=context):
+    @api.multi
+    def unlink(self):
+        for schedule in self:
             # Do not remove schedules that are not in draft or unlocked state
-            if not self.deletable(cr, uid, schedule.id, context):
+            if not self.delete_table():
                 continue
 
             # Delete the schedule details associated with this schedule
             #
-            detail_ids = []
-            [detail_ids.append(detail.id) for detail in schedule.detail_ids]
-            if len(detail_ids) > 0:
-                detail_obj.unlink(cr, uid, detail_ids, context=context)
+            if len(schedule.detail_ids) > 0:
+                schedule.detail_ids.unlink()
 
-            schedule_ids.append(schedule.id)
+        return super(HrSchedule, self).unlink()
 
-        return super(hr_schedule, self).unlink(
-            cr, uid, schedule_ids, context=context)
+    @api.multi
+    def _workflow_common(self, signal, next_state):
+        for schedule in self:
+            for detail in schedule.detail_ids:
+                trg_validate(
+                    self.env.uid, 'hr.schedule.detail', detail.id, signal,
+                    self.env.cr
+                )
+            schedule.write({'state': next_state})
 
-    def _workflow_common(self, cr, uid, ids, signal, next_state, context=None):
-
-        wkf = netsvc.LocalService('workflow')
-        for sched in self.browse(cr, uid, ids, context=context):
-            for detail in sched.detail_ids:
-                wkf.trg_validate(
-                    uid, 'hr.schedule.detail', detail.id, signal, cr)
-            self.write(
-                cr, uid, sched.id, {'state': next_state}, context=context)
         return True
 
-    def workflow_validate(self, cr, uid, ids, context=None):
-        return self._workflow_common(
-            cr, uid, ids, 'signal_validate', 'validate', context=context)
+    def workflow_validate(self):
+        return self._workflow_common('signal_validate', 'validate')
 
-    def details_locked(self, cr, uid, ids, context=None):
-
-        for sched in self.browse(cr, uid, ids, context=context):
-            for detail in sched.detail_ids:
+    @api.multi
+    def details_locked(self):
+        for schedule in self:
+            for detail in schedule.detail_ids:
                 if detail.state != 'locked':
                     return False
 
         return True
 
-    def workflow_lock(self, cr, uid, ids, context=None):
-        """Lock the Schedule Record. Expects to be called by its
+    @api.multi
+    def workflow_lock(self):
+        """
+        Lock the Schedule Record. Expects to be called by its
         schedule detail records as they are locked one by one.
         When the last one has been locked the schedule will also be
         locked.
         """
-
         all_locked = True
-        for sched in self.browse(cr, uid, ids, context=context):
-            if self.details_locked(cr, uid, [sched.id], context):
-                self.write(cr, uid, sched.id, {
-                           'state': 'locked'}, context=context)
+
+        for schedule in self:
+            if self.details_locked():
+                schedule.write({'state': 'locked'})
             else:
                 all_locked = False
 
         return all_locked
 
-    def workflow_unlock(self, cr, uid, ids, context=None):
-        """Unlock the Schedule Record. Expects to be called by its
+    def workflow_unlock(self):
+        """
+        Unlock the Schedule Record. Expects to be called by its
         schedule detail records as they are unlocked one by one.
         When the first one has been unlocked the schedule will also be
         unlocked.
         """
 
         all_locked = True
-        for sched in self.browse(cr, uid, ids, context=context):
-            if not self.details_locked(cr, uid, [sched.id], context):
-                self.write(
-                    cr, uid, sched.id, {'state': 'unlocked'}, context=context)
+
+        for schedule in self:
+            if not self.details_locked():
+                schedule.write({'state': 'unlocked'})
             else:
                 all_locked = False
 
         return all_locked is False
-
-
-

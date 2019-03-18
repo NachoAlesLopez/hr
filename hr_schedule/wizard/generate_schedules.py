@@ -18,87 +18,75 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-from openerp.osv import fields, orm
+from odoo import fields, api, models
+from odoo.exceptions import UserError
 
 
-class hr_schedule_generate(orm.TransientModel):
-
+class HrScheduleGenerate(models.TransientModel):
     _name = 'hr.schedule.generate'
     _description = 'Generate Schedules'
-    _columns = {
-        'date_start': fields.date(
-            'Start',
-            required=True,
-        ),
-        'no_weeks': fields.integer(
-            'Number of weeks',
-            required=True,
-        ),
-        'employee_ids': fields.many2many(
-            'hr.employee',
-            'hr_employee_schedule_rel',
-            'generate_id',
-            'employee_id',
-            'Employees',
-        ),
-    }
-    _defaults = {
-        'no_weeks': 2,
-    }
 
-    def onchange_start_date(self, cr, uid, ids, date_start, context=None):
+    date_start = fields.Date(
+        string='Start', required=True
+    )
+    no_weeks = fields.Integer(
+        string='Number of weeks', required=True, default=2
+    ),
+    employee_ids = fields.Many2many(
+        comodel_name='hr.employee', relation='hr_employee_schedule_rel',
+        column1='generate_id', column2='employee_id', string='Employees'
+    )
 
-        res = {
-            'value': {
-                'date_start': False,
-            }
-        }
-        if date_start:
-            dStart = datetime.strptime(date_start, '%Y-%m-%d').date()
+    @api.multi
+    @api.onchange('date_start')
+    def onchange_start_date(self):
+        if self.date_start:
+            date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
             # The schedule must start on a Monday
-            if dStart.weekday() == 0:
-                res['value']['date_start'] = dStart.strftime('%Y-%m-%d')
+            if date_start.weekday() == 0:
+                self.date_start = date_start.strftime('%Y-%m-%d')
+            else:
+                raise UserError(
+                    _("The start date of the schedule must start on mondays"))
 
-        return res
+    @api.multi
+    def generate_schedules(self):
+        # TODO Este código para el wizard no está preparado para afrontar más
+        # de un objeto. Posiblemente haga falta corregirlo.
+        self.ensure_one()
+        schedule_obj = self.env['hr.schedule']
+        employee_obj = self.env['hr.employee']
 
-    def generate_schedules(self, cr, uid, ids, context=None):
+        date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
+        date_end = date_start + relativedelta(weeks=+self.no_weeks, days=-1)
+        schedules = self.env['hr.schedule']
 
-        sched_obj = self.pool.get('hr.schedule')
-        ee_obj = self.pool.get('hr.employee')
-        data = self.read(cr, uid, ids, context=context)[0]
-
-        dStart = datetime.strptime(data['date_start'], '%Y-%m-%d').date()
-        dEnd = dStart + relativedelta(weeks=+data['no_weeks'], days=-1)
-
-        sched_ids = []
-        if len(data['employee_ids']) > 0:
-            for ee in ee_obj.browse(
-                    cr, uid, data['employee_ids'], context=context):
-                if (not ee.contract_id
-                        or not ee.contract_id.schedule_template_id):
+        if len(self.employee_ids) > 0:
+            for employee in self.employee_ids:
+                if (not employee.contract_id
+                        or not employee.contract_id.schedule_template_id):
                     continue
-                sched = {
-                    'name': (ee.name + ': ' + data['date_start'] + ' Wk ' +
-                             str(dStart.isocalendar()[1])),
-                    'employee_id': ee.id,
-                    'template_id': ee.contract_id.schedule_template_id.id,
-                    'date_start': dStart.strftime('%Y-%m-%d'),
-                    'date_end': dEnd.strftime('%Y-%m-%d'),
+
+                schedule_vals = {
+                    'name': (employee.name + ': ' + self.date_start + ' Wk ' +
+                             str(date_start.isocalendar()[1])),
+                    'employee_id': employee.id,
+                    'template_id': employee.contract_id.schedule_template_id.id,
+                    'date_start': date_start.strftime('%Y-%m-%d'),
+                    'date_end': date_end.strftime('%Y-%m-%d'),
                 }
-                sched_ids.append(
-                    sched_obj.create(cr, uid, sched, context=context))
+
+                schedules = schedules + \
+                    schedule_obj.create(schedule_vals)
 
         return {
             'view_type': 'form',
             'view_mode': 'tree,form',
             'res_model': 'hr.schedule',
-            'domain': [('id', 'in', sched_ids)],
+            'domain': [('id', 'in', schedules.ids)],
             'type': 'ir.actions.act_window',
-            'target': 'current',
-            'nodestroy': True,
-            'context': context,
+            'target': 'current'
         }

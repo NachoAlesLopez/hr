@@ -18,68 +18,62 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-from openerp.osv import fields, orm
+from odoo import fields, api, models
 
 
-class compute_alerts(orm.TransientModel):
-
+class WizardComputeAlerts(models.TransientModel):
     _name = 'hr.schedule.alert.compute'
     _description = 'Check Alerts'
-    _columns = {
-        'date_start': fields.date(
-            'Start',
-            required=True,
-        ),
-        'date_end': fields.date(
-            'End',
-            required=True,
-        ),
-        'employee_ids': fields.many2many(
-            'hr.employee',
-            'hr_employee_alert_rel',
-            'generate_id',
-            'employee_id',
-            'Employees',
-        ),
-    }
 
-    def generate_alerts(self, cr, uid, ids, context=None):
+    date_start = fields.Date(
+        string='Start', required=True
+    )
+    date_end = fields.Date(
+        string='End', required=True
+    )
+    employee_ids = fields.Many2many(
+        comodel_name='hr.employee', relation='hr_employee_alert_rel',
+        column1='generate_id', column2='employee_id', string='Employees'
+    )
 
-        alert_obj = self.pool.get('hr.schedule.alert')
+    @api.multi
+    def generate_alerts(self):
+        # TODO Este código para el wizard no está preparado para afrontar más
+        # de un objeto. Posiblemente haga falta corregirlo.
+        self.ensure_one()
+        alert_obj = self.env['hr.schedule.alert']
 
-        data = self.read(cr, uid, ids, context=context)[0]
-        dStart = datetime.strptime(data['date_start'], '%Y-%m-%d').date()
-        dEnd = datetime.strptime(data['date_end'], '%Y-%m-%d').date()
-        dToday = datetime.strptime(fields.date.context_today(
-            self, cr, uid, context=context), '%Y-%m-%d').date()
-        if dToday < dEnd:
-            dEnd = dToday
+        date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
+        date_end = datetime.strptime(self.date_end, '%Y-%m-%d').date()
+        date_today = datetime.strptime(fields.Date.context_today(), '%Y-%m-%d')\
+            .date()
 
-        dNext = dStart
-        for employee_id in data['employee_ids']:
-            while dNext <= dEnd:
+        if date_today < date_end:
+            date_end = date_today
+
+        date_next = date_start
+        for employee in self.employee_ids:
+            while date_next <= date_end:
                 alert_obj.compute_alerts_by_employee(
-                    cr, uid, employee_id, dNext.strftime('%Y-%m-%d'),
-                    context=context
+                    employee, date_next.strftime('%Y-%m-%d')
                 )
-                dNext += relativedelta(days=+1)
+
+                date_next += relativedelta(days=+1)
 
         return {
             'view_type': 'form',
             'view_mode': 'tree,form',
             'res_model': 'hr.schedule.alert',
             'domain': [
-                ('employee_id', 'in', data['employee_ids']),
+                ('employee_id', 'in', self.employee_ids.ids),
                 '&',
-                ('name', '>=', data['date_start'] + ' 00:00:00'),
-                ('name', '<=', data['date_end'] + ' 23:59:59')
+                ('name', '>=', self.date_start + ' 00:00:00'),
+                ('name', '<=', self.date_end + ' 23:59:59')
             ],
             'type': 'ir.actions.act_window',
             'target': 'current',
             'nodestroy': True,
-            'context': context,
         }

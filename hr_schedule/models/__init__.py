@@ -25,8 +25,5 @@ from . import hr_schedule_detail
 from . import hr_schedule_request
 from . import hr_schedule_template
 from . import hr_schedule_template_worktime
-
-from . import hr_contract_init
 from . import hr_contract
 from . import hr_attendance
-from . import hr_employee_termination
