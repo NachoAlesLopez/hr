@@ -20,6 +20,7 @@
 #
 from . import hr_schedule
 from . import hr_schedule_weekday
+from . import hr_schedule_alert_rule
 from . import hr_schedule_alert
 from . import hr_schedule_detail
 from . import hr_schedule_request

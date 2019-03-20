@@ -34,7 +34,7 @@ class HrScheduleGenerate(models.TransientModel):
     )
     no_weeks = fields.Integer(
         string='Number of weeks', required=True, default=2
-    ),
+    )
     employee_ids = fields.Many2many(
         comodel_name='hr.employee', relation='hr_employee_schedule_rel',
         column1='generate_id', column2='employee_id', string='Employees'

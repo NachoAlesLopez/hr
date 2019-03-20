@@ -48,7 +48,7 @@ class WizardComputeAlerts(models.TransientModel):
 
         date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
         date_end = datetime.strptime(self.date_end, '%Y-%m-%d').date()
-        date_today = datetime.strptime(fields.Date.context_today(), '%Y-%m-%d')\
+        date_today = datetime.strptime(fields.Date.context_today(self), '%Y-%m-%d')\
             .date()
 
         if date_today < date_end:

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-from datetime import datetime, timezone
+from datetime import datetime
 from dateutil import relativedelta
+from pytz import timezone, utc
 
 from odoo import fields, api, models
 
 
 class HrAttendance(models.Model):
-    _name = 'hr.attendance'
     _inherit = 'hr.attendance'
     
     alert_ids = fields.One2many(
@@ -30,7 +30,7 @@ class HrAttendance(models.Model):
             alerts = alerts + attendance.alert_ids
             key = str(attendance.employee_id.id) + attendance.day
             if key not in attendance_keys:
-                attendances.append((attendance.employee_id.id, attendance.day))
+                attendances.append((attendance.employee_id, attendance.day))
                 attendance_keys.append(key)
 
         if len(alerts) > 0:
@@ -40,7 +40,9 @@ class HrAttendance(models.Model):
 
     @api.multi
     def _recompute_alerts(self, attendances):
-        """Recompute alerts for each record in attendances."""
+        """
+        Recompute alerts for each record in attendances.
+        """
         alert_obj = self.env['hr.schedule.alert']
 
         # Remove all alerts for the employee(s) for the day and recompute.
@@ -53,10 +55,10 @@ class HrAttendance(models.Model):
 
             # TODO - Someone who cares about DST should fix this
             #
-            data = self.env.user.tz
+            local_tz = utc if not self.env.user.tz else timezone(self.env.user.tz)
             dt = datetime.strptime(str_day + ' 00:00:00', '%Y-%m-%d %H:%M:%S')
-            local_dt = timezone(data).localize(dt, is_dst=False)
-            utc_dt = local_dt.astimezone(timezone.utc)
+            local_dt = local_tz.localize(dt, is_dst=False)
+            utc_dt = local_dt.astimezone(utc)
             utc_dt_next_day = utc_dt + relativedelta(days=+1)
             str_day_start = utc_dt.strftime('%Y-%m-%d %H:%M:%S')
             str_next_day = utc_dt_next_day.strftime('%Y-%m-%d %H:%M:%S')
@@ -76,7 +78,7 @@ class HrAttendance(models.Model):
 
         attendances = [
             (
-                res.employee_id.id, fields.Date.context_today()
+                res.employee_id, fields.Date.context_today()
             )
         ]
         res._recompute_alerts(attendances)

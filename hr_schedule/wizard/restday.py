@@ -37,7 +37,7 @@ class HrRestdayWizard(models.TransientModel):
     employee_id = fields.Many2one(
         comodel_name='hr.employee', string='Employee', required=True
     )
-    contract_id = fields.Related(
+    contract_id = fields.Many2one (
         comodel_name="hr.contract", string="Contract",
         related='employee_id.contract_id', readonly=True
     )
@@ -76,32 +76,31 @@ class HrRestdayWizard(models.TransientModel):
     )
 
     @api.multi
-    @api.onchange('employee_id')
+    @api.constrains('employee_id')
     def onchange_employee(self):
         if self.employee_id:
             self.st_current_id = self.employee_id.contract_id.\
                 schedule_template_id.id
 
     @api.multi
-    @api.onchange('week_start')
+    @api.constrains('week_start')
     def onchange_week(self):
-        if self.week_start:
+        if self.week_start and not self.temp_restday:
             date = datetime.strptime(self.week_start, "%Y-%m-%d")
             if date.weekday() != 0:
                 self.week_start = False
-            else:
                 raise UserError(
                     _("The starting week of the restday must start on mondays")
                 )
 
+
     @api.multi
-    @api.onchange('temp_week_start')
+    @api.constrains('temp_week_start')
     def onchange_temp_week(self):
-        if self.temp_week_start:
+        if self.temp_week_start and self.temp_restday:
             date = datetime.strptime(self.temp_week_start, "%Y-%m-%d")
             if date.weekday() != 0:
                 self.temp_week_start = False
-            else:
                 raise UserError(
                     _("The temporal start date of the restday must start"
                       " on mondays")
@@ -119,7 +118,7 @@ class HrRestdayWizard(models.TransientModel):
 
         prev_utc_dt_start = False
         prev_day_of_week = False
-        local_tz = self.env.user.tz
+        local_tz = utc if not self.env.user.tz else timezone(self.env.user.tz)
         date_scheduled_start = datetime.strptime(
             schedule.date_start, DEFAULT_SERVER_DATE_FORMAT
         ).date()
@@ -267,7 +266,7 @@ class HrRestdayWizard(models.TransientModel):
             schedule._create_detail(str(rest_days[0]), dayofweek, week_start)
 
     @api.multi
-    def _remove_add_schedule(self, schedules, week_start, tpl_id):
+    def _remove_add_schedule(self, schedules, week_start, template):
         """
         Remove the current schedule and add a new one in its place
         according to the new template. If the week that the change
@@ -276,12 +275,13 @@ class HrRestdayWizard(models.TransientModel):
         partial new one.
         """
         schedule_obj = self.env['hr.schedule']
+
         for schedule in schedules:
             vals2 = False
             vals1 = {
                 'name': schedule.name,
                 'employee_id': schedule.employee_id.id,
-                'template_id': tpl_id,
+                'template_id': template.id,
                 'date_start': schedule.date_start,
                 'date_end': schedule.date_end,
             }
@@ -295,11 +295,12 @@ class HrRestdayWizard(models.TransientModel):
                 vals1['date_end'] = (
                     date_week_start + relativedelta(days=-1)
                 ).strftime('%Y-%m-%d')
+
                 vals2 = {
                     'name': (schedule.employee_id.name + ': ' + start_day +
                              ' Wk ' + str(date_week_start.isocalendar()[1])),
                     'employee_id': schedule.employee_id.id,
-                    'template_id': tpl_id,
+                    'template_id': template.id,
                     'date_start': start_day,
                     'date_end': schedule.date_end,
                 }
@@ -309,12 +310,12 @@ class HrRestdayWizard(models.TransientModel):
             if vals2:
                 schedule_obj.create(vals2)
 
-    def _change_by_template(self, employee_id, week_start, new_template_id,
+    def _change_by_template(self, employee, week_start, new_template,
                             doall):
         sched_obj = self.env['hr.schedule']
 
         schedule_ids = sched_obj.search([
-            ('employee_id', '=', employee_id),
+            ('employee_id', '=', employee.id),
             ('date_start', '<=', week_start),
             ('date_end', '>=', week_start),
             ('state', 'not in', ['locked'])
@@ -325,17 +326,17 @@ class HrRestdayWizard(models.TransientModel):
         #
         if len(schedule_ids) > 0:
             self._remove_add_schedule(schedule_ids[0], week_start,
-                                      new_template_id)
+                                      new_template)
 
         # Also, change all subsequent schedules if so directed
         if doall:
             schedules = sched_obj.search([
-                ('employee_id', '=', employee_id),
+                ('employee_id', '=', employee.id),
                 ('date_start', '>', week_start),
                 ('state', 'not in', ['locked'])
             ])
 
-            self._remove_add_schedule(schedules, week_start, new_template_id)
+            self._remove_add_schedule(schedules, week_start, new_template)
 
     def change_restday(self):
         # Change the rest day for only one schedule

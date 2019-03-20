@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-from datetime import datetime, timezone, timedelta
-from dateutil import relativedelta
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+from pytz import timezone, utc
 
 from odoo import fields, api, models
 from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT
@@ -59,7 +60,7 @@ class HrScheduleAlert(models.Model):
         store=True,
         readonly=True
     )
-    severity = fields.Char(
+    severity = fields.Selection(
         string='Severity',
         related='rule_id.severity',
         store=True,
@@ -91,20 +92,17 @@ class HrScheduleAlert(models.Model):
         detail_obj = self.pool.get('hr.schedule.detail')
         attendance_obj = self.pool.get('hr.attendance')
         rule_obj = self.pool.get('hr.schedule.alert.rule')
-        user = self.env.user
+        local_tz = utc if not self.env.user.tz else timezone(self.env.user.tz)
 
         # TODO - Someone who cares about DST should fix ths
         #
-        data = user.tz
         dt_today = \
             datetime.strptime(
                 datetime.now().strftime('%Y-%m-%d') + ' 00:00:00',
                 '%Y-%m-%d %H:%M:%S'
             )
         local_dt_today = \
-            timezone(
-                data['tz'] and data['tz'] or 'UTC'
-            ).localize(dt_today, is_dst=False)
+            local_tz.localize(dt_today, is_dst=False)
         utc_dt_today = local_dt_today.astimezone(timezone.utc)
         utd_dt_yesterday = utc_dt_today + relativedelta(days=-1)
         date_str_today = utc_dt_today.strftime('%Y-%m-%d %H:%M:%S')
@@ -226,14 +224,13 @@ class HrScheduleAlert(models.Model):
         detail_obj = self.env['hr.schedule.detail']
         atnd_obj = self.env['hr.attendance']
         rule_obj = self.env['hr.schedule.alert.rule']
-        user = self.env.user
+        local_tz = utc if not self.env.user.tz else timezone(self.env.user.tz)
 
         # TODO - Someone who cares about DST should fix ths
         #
-        data = user.tz
         dt = datetime.strptime(str_date + ' 00:00:00', '%Y-%m-%d %H:%M:%S')
-        local_dt = timezone(data['tz']).localize(dt, is_dst=False)
-        utc_dt = local_dt.astimezone(timezone.utc)
+        local_dt = local_tz.localize(dt, is_dst=False)
+        utc_dt = local_dt.astimezone(utc)
         utc_dt_next_day = utc_dt + relativedelta(days=+1)
         str_today = utc_dt.strftime('%Y-%m-%d %H:%M:%S')
         str_next_day = utc_dt_next_day.strftime('%Y-%m-%d %H:%M:%S')
@@ -241,17 +238,17 @@ class HrScheduleAlert(models.Model):
         # Get schedule and attendance records for the employee for the day
         #
         schedule_details = detail_obj.search([
-            ('schedule_id.employee', '=', employee.id),
+            ('schedule_id.employee_id', '=', employee.id),
             '&',
             ('day', '>=', str_today),
             ('day', '<', str_next_day),
         ], order='date_start')
         attendances = atnd_obj.search([
-            ('employee', '=', employee.id),
+            ('employee_id', '=', employee.id),
             '&',
-            ('name', '>=', str_today),
-            ('name', '<', str_next_day),
-        ], order='name')
+            ('check_in', '>=', str_today),
+            ('check_in', '<', str_next_day),
+        ], order='check_in')
 
         attendances = self._get_normalized_attendance(
             employee, utc_dt, attendances

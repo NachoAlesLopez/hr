@@ -19,7 +19,7 @@ class HrScheduleTemplate(models.Model):
     worktime_ids = fields.One2many(
         comodel_name='hr.schedule.template.worktime',
         inverse_name='template_id', string='Working Time',
-    ),
+    )
     restday_ids = fields.Many2many(
         comodel_name='hr.schedule.weekday',
         relation='schedule_template_restdays_rel', column1='sched_id',

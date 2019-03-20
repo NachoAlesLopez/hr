@@ -91,7 +91,7 @@ class HrHolidays(models.Model):
             # Re-create affected schedules from scratch
             for schedule in schedules:
                 schedule.delete_details()
-                schedule.create_details()
+                schedule.create_details(schedule)
 
         return res
 

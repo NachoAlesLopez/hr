@@ -18,9 +18,9 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 #
-from datetime import datetime, timezone, timedelta
-from dateutil import relativedelta
-from pytz import utc
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+from pytz import timezone, utc
 
 from odoo import fields, api, models, _
 from odoo.exceptions import UserError
@@ -108,19 +108,18 @@ class HrSchedule(models.Model):
         ], string='State', required=True, readonly=True, default='draft'
     )
 
-    @api.multi
-    @api.constrains('date_start', 'date_end')
-    def _check_overlapping_schedules(self): # Migrado
-        for schedule in self:
-            schedules = self.env['hr.schedule'].search([
-                ('date_start', '<=', schedule.date_start),
-                (schedule.date_end, '<=', 'date_end'),
-                ('employee_id', '=', schedule.employee_id.id)
-            ])
-            if schedules:
-                return _('You cannot have schedules that overlap!')
-            else:
-                return False
+    @api.model
+    def _check_overlapping_schedules(self, values):
+        schedules = self.env['hr.schedule'].search([
+            ('date_start', '>=', values['date_start']),
+            ('date_end', '<=', values['date_end']),
+            ('employee_id', '=', values['employee_id'])
+        ])
+
+        if schedules:
+            return _('You cannot have schedules that overlap!')
+        else:
+            return False
 
     # TODO: Sin usar????
     # @api.multi  # ?
@@ -243,35 +242,39 @@ class HrSchedule(models.Model):
 
         return res
 
-    @api.one
-    @api.onchange('employee_id', 'date_start')
+    @api.multi
+    @api.constrains('employee_id', 'date_start')
     def onchange_employee_start_date(self):
-        res = {}
-
-        if self.date_start:
-            date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
-            # The schedule must start on a Monday
-            if date_start.weekday() != 0:
-                res['date_start'] = False
-                res['date_end'] = False
-            else:
-                date_end = date_start + relativedelta(days=+6)
-                res['date_end'] = date_end
-
-        if self.employee_id.name:
-            res['name'] = self.employee_id.name
+        for schedule in self:
+            res = {}
+            date_start = self.date_start
 
             if date_start:
-                res['name'] = self.name + ': ' + date_start.strftime('%Y-%m-%d')\
-                    + ' Wk ' + str(date_start.isocalendar()[1])
+                date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
+                # The schedule must start on a Monday
+                if date_start.weekday() != 0:
+                    raise UserError(_("The starting date of the schedule must start on mondays"))
+                else:
+                    date_end = date_start + relativedelta(days=+6)
+                    res['date_end'] = date_end
 
-        if self.employee_id.contract_id:
-            contract = self.employee_id.mapped('contract_id')
+            if self.employee_id.name:
+                res['name'] = self.employee_id.name
 
-            if contract.schedule_template_id:
-                res['template_id'] = contract[0]['schedule_template_id']
+                if date_start:
+                    res['name'] = "{}: {} Wk {}".format(
+                        self.name,
+                        date_start.strftime('%Y-%m-%d'),
+                        str(date_start.isocalendar()[1])
+                    )
 
-        self.write(res)
+            if self.employee_id.contract_id:
+                contract = self.employee_id.mapped('contract_id')
+
+                if contract.schedule_template_id:
+                    res['template_id'] = contract[0]['schedule_template_id']
+
+            self.write(res)
 
     @api.multi
     def delete_details(self):
@@ -295,11 +298,11 @@ class HrSchedule(models.Model):
                     field_name: [(6, 0, restday_ids)]
                 })
 
-    @api.multi
-    def create_details(self):
+    @api.model
+    def create_details(self, schedules):
         leave_obj = self.env['hr.holidays']
 
-        for schedule in self.filtered(lambda item: item.template_id):
+        for schedule in schedules.filtered(lambda item: item.template_id):
             leaves = []
             leave_ids = leave_obj.search([
                 ('employee_id', '=', schedule.employee_id.id),
@@ -324,8 +327,7 @@ class HrSchedule(models.Model):
 
                 leaves.append((utc_dt_from, utc_dt_to))
 
-            user = self.env.user
-            local_tz = timezone(user.tz)
+            local_tz = utc if not self.env.user.tz else timezone(self.env.user.tz)
             schedule_date_iter = \
                 datetime.strptime(schedule.date_start, '%Y-%m-%d').date()
             schedule_date_end = \
@@ -454,9 +456,14 @@ class HrSchedule(models.Model):
 
     @api.model
     def create(self, vals):
+        error_msg = self._check_overlapping_schedules(vals)
+
+        if error_msg:
+            raise UserError(error_msg)
+
         result = super(HrSchedule, self).create(vals)
 
-        self.create_details(result.id)
+        self.create_details(result)
 
         return result
 

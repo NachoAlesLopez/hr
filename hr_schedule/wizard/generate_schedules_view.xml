@@ -18,6 +18,9 @@
                             string="Generate" icon="fa-play"
                             class="oe_highlight"/>
                 </group>
+                <footer>
+
+                </footer>
             </form>
         </field>
     </record>

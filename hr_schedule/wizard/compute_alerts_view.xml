@@ -18,6 +18,9 @@
                             icon="fa-play" class="oe_highlight"/>
                     <button special="cancel" string="Close" class="btn-primary"/>
                 </group>
+                <footer>
+
+                </footer>
             </form>
         </field>
     </record>

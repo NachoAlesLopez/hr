@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<openerp>
+<odoo>
     <data noupdate="1">
-        
         <record id="wd_mon" model="hr.schedule.weekday">
             <field name="name">Monday</field>
             <field name="sequence" eval="0"/>
@@ -48,6 +47,5 @@
             <field name="res_model">hr.schedule.alert</field>
             <field name="description">Alert state is unresolved</field>
         </record>
-
     </data>
-</openerp>
+</odoo>

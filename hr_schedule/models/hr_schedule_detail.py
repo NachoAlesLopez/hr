@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-from datetime import timedelta, time, datetime, timezone
-from dateutil import relativedelta
+from datetime import timedelta, time, datetime
+from dateutil.relativedelta import relativedelta
+from pytz import utc, timezone
 
 from odoo import fields, api, models
 from odoo.workflow import trg_validate
@@ -204,7 +205,7 @@ WHERE (date_start <= %s and %s <= date_end)
             key = str(detail.schedule_id.employee_id.id) + day
 
             if key not in sched_keys:
-                scheds.append((detail.schedule_id.employee_id.id, day))
+                scheds.append((detail.schedule_id.employee_id, day))
                 sched_keys.append(key)
 
         if len(alerts) > 0:
@@ -216,28 +217,27 @@ WHERE (date_start <= %s and %s <= date_end)
     def _recompute_alerts(self, attendances):
         """Recompute alerts for each record in schedule detail."""
         alert_obj = self.env['hr.schedule.alert']
-        user = self.env.user
-        data = user.tz
+        local_tz = utc if not self.env.user.tz else timezone(self.env.user.tz)
 
         # Remove all alerts for the employee(s) for the day and recompute.
         #
         for employee, str_day in attendances:
             # Today's records will be checked tomorrow. Future records can't
             # generate alerts.
-            if str_day >= fields.Date.context_today():
+            if str_day >= fields.Date.context_today(self):
                 continue
 
             # TODO - Someone who cares about DST should fix this
             #
             dt = datetime.strptime(str_day + ' 00:00:00', '%Y-%m-%d %H:%M:%S')
-            local_dt = timezone(data['tz']).localize(dt, is_dst=False)
-            utc_dt = local_dt.astimezone(timezone.utc)
+            local_dt = local_tz.localize(dt, is_dst=False)
+            utc_dt = local_dt.astimezone(utc)
             utc_dt_next_day = utc_dt + relativedelta(days=+1)
             str_day_start = utc_dt.strftime('%Y-%m-%d %H:%M:%S')
             str_next_day = utc_dt_next_day.strftime('%Y-%m-%d %H:%M:%S')
 
             alerts = alert_obj.search([
-                ('employee_id', '=', employee),
+                ('employee_id', '=', employee.id),
                 '&',
                 ('name', '>=', str_day_start),
                 ('name', '<', str_next_day)
@@ -247,7 +247,7 @@ WHERE (date_start <= %s and %s <= date_end)
 
     @api.model
     def create(self, vals):
-        local_tz = self.env.user.tz
+        local_tz = utc if not self.env.user.tz else timezone(self.env.user.tz)
 
         if 'day' not in vals and 'date_start' in vals:
             # TODO - Someone affected by DST should fix this
@@ -256,7 +256,7 @@ WHERE (date_start <= %s and %s <= date_end)
                 vals['date_start'], DEFAULT_SERVER_DATETIME_FORMAT
             )
             local_dt_start = local_tz.localize(dt_start, is_dst=False)
-            utc_dt_start = local_dt_start.astimezone(timezone.utc)
+            utc_dt_start = local_dt_start.astimezone(utc)
             day_date = utc_dt_start.astimezone(local_tz).date()
             vals['day'] = day_date
 
@@ -266,7 +266,7 @@ WHERE (date_start <= %s and %s <= date_end)
 
         attendances = [
             (
-                res.schedule_id.employee_id.id, fields.Date.context_today(),
+                res.schedule_id.employee_id.id, fields.Date.context_today(self),
             ),
         ]
         self._recompute_alerts(attendances)
@@ -279,11 +279,12 @@ WHERE (date_start <= %s and %s <= date_end)
 
         for detail in self:
             if detail.state in ['draft', 'unlocked']:
-                editable_details.append(detail.id)
+                editable_details = editable_details +\
+                    detail
 
         # Remove alerts directly attached to the schedule details
         #
-        attendances = self._remove_direct_alerts(editable_details)
+        attendances = self._remove_direct_alerts()
 
         res = super(HrScheduleDetail, self).unlink()
 
