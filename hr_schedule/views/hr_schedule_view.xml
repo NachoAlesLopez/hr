@@ -2,7 +2,7 @@
 <odoo>
     <!-- Top-level Menu -->
     <menuitem name="Time and Attendance" id="menu_time_attendance"
-              parent="hr.menu_hr_root" groups="hr.group_hr_user" sequence="1"/>
+              parent="hr.menu_hr_root" groups="hr.group_hr_user" sequence="10"/>
 
     <!-- Put the attendance top-level menu under our submenu -->
     <menuitem id="hr_attendance.menu_hr_attendance" name="Attendances"
@@ -59,12 +59,19 @@
         <field name="name">hr.schedule.form</field>
         <field name="model">hr.schedule</field>
         <field name="arch" type="xml">
-            <form string="Employee Schedule" >
+            <form string="Employee Schedule">
+                <header>
+                    <button name="button_confirm" string="Confirm schedule" type="object"
+                            attrs="{'invisible': [('state', '!=', 'draft')]}"
+                            class="oe_highlight"/>
+                    <button name="button_lock" string="Lock schedule" type="object"
+                            attrs="{'invisible': [('state', '!=', 'confirmed')]}"/>
+                    <button name="button_draft" string="Return to draft" type="object"
+                            attrs="{'invisible': [('state', '!=', 'confirmed')]}"/>
+
+                    <field name="state" widget="statusbar"/>
+                </header>
                 <sheet>
-                    <header>
-                        <button name="signal_validate" type="workflow" states="draft" class="oe_highlight" string="Validate"/>
-                        <field name="state" widget="statusbar"/>
-                    </header>
                     <group col="4">
                         <field name="employee_id"/>
                         <field name="template_id"/>
@@ -77,6 +84,7 @@
                         <field name="department_id"/>
                         <field name="company_id" groups="base.group_multi_company"/>
                     </group>
+
                     <notebook>
                         <page string="Working Days">
                             <field name="detail_ids">
@@ -89,6 +97,7 @@
                                 </tree>
                             </field>
                         </page>
+
                         <page string="Rest Days">
                             <group>
                                 <group>
@@ -100,6 +109,7 @@
                                 </group>
                             </group>
                         </page>
+
                         <page string="Alerts">
                             <group string="Alerts" colspan="4" cols="5">
                                 <field name="alert_ids" nolabel="1"/>
@@ -107,6 +117,11 @@
                         </page>
                     </notebook>
                 </sheet>
+
+                <div class="oe_chatter">
+                    <field name="message_follower_ids" widget="mail_followers"/>
+                    <field name="message_ids" widget="mail_thread"/>
+                </div>
             </form>
         </field>
     </record>
@@ -218,7 +233,7 @@
         <field name="name">hr.schedule.request.tree</field>
         <field name="model">hr.schedule.request</field>
         <field name="arch" type="xml">
-            <tree string="Change Requests" create="0" edit="0">
+            <tree string="Change Requests">
                 <field name="employee_id"/>
                 <field name="date"/>
                 <field name="type"/>
@@ -293,7 +308,8 @@
         <field name="name">hr.schedule.alert.tree</field>
         <field name="model">hr.schedule.alert</field>
         <field name="arch" type="xml">
-            <tree string="Exceptions" colors="red:severity == 'critical';orange:severity == 'high';blue:severity == 'medium';black:severity == 'low';">
+            <tree string="Exceptions" colors="red:severity == 'critical';orange:severity == 'high';blue:severity == 'medium';black:severity == 'low';"
+                  create="0" edit="0">
                 <field name="department_id"/>
                 <field name="rule_id"/>
                 <field name="employee_id"/>
@@ -307,7 +323,7 @@
         <field name="name">hr.schedule.alert.form</field>
         <field name="model">hr.schedule.alert</field>
         <field name="arch" type="xml">
-            <form string="Exception" version="7.0">
+            <form string="Exception" create="0" edit="0">
                 <sheet>
                     <header>
                         <field name="state" widget="statusbar"/>
@@ -396,6 +412,7 @@
             </form>
         </field>
     </record>
+
     <record id="open_hr_schedule_alert_rule_view" model="ir.actions.act_window">
         <field name="name">Exception Rules</field>
         <field name="res_model">hr.schedule.alert.rule</field>
@@ -527,7 +544,9 @@
         <field name="arch" type="xml">
             <data>
                 <xpath expr="//div[@name='button_box']" position="inside">
-                    <button name="%(act_hr_employee_2_hr_schedule)d" string="Schedule" type="action" groups="hr.group_hr_user"/>
+                    <button name="%(act_hr_employee_2_hr_schedule)d" string="Schedule"
+                            class="oe_stat_button" icon="fa-clock-o"
+                            type="action" groups="hr.group_hr_user"/>
                 </xpath>
             </data>
         </field>

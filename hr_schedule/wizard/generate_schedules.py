@@ -21,7 +21,7 @@
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-from odoo import fields, api, models
+from odoo import fields, api, models, _
 from odoo.exceptions import UserError
 
 
@@ -40,15 +40,13 @@ class HrScheduleGenerate(models.TransientModel):
         column1='generate_id', column2='employee_id', string='Employees'
     )
 
-    @api.multi
-    @api.onchange('date_start')
+    @api.one
+    @api.constrains('date_start')
     def onchange_start_date(self):
         if self.date_start:
             date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
             # The schedule must start on a Monday
-            if date_start.weekday() == 0:
-                self.date_start = date_start.strftime('%Y-%m-%d')
-            else:
+            if date_start.weekday() != 0:
                 raise UserError(
                     _("The start date of the schedule must start on mondays"))
 
@@ -58,7 +56,6 @@ class HrScheduleGenerate(models.TransientModel):
         # de un objeto. Posiblemente haga falta corregirlo.
         self.ensure_one()
         schedule_obj = self.env['hr.schedule']
-        employee_obj = self.env['hr.employee']
 
         date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
         date_end = date_start + relativedelta(weeks=+self.no_weeks, days=-1)

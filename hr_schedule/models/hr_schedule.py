@@ -24,7 +24,8 @@ from pytz import timezone, utc
 
 from odoo import fields, api, models, _
 from odoo.exceptions import UserError
-from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT
+from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT,\
+    DEFAULT_SERVER_DATE_FORMAT
 from odoo.workflow import trg_validate
 
 
@@ -41,8 +42,8 @@ class HrSchedule(models.Model):
             schedule.alert_ids = alert_ids
 
     name = fields.Char(
-        string="Description", size=64, required=True, readonly=True,
-        states={'draft': [('readonly', False)]}
+        string="Description", required=True,
+        states={'locked': [('readonly', True)]}
     )
 
     company_id = fields.Many2one(
@@ -52,24 +53,22 @@ class HrSchedule(models.Model):
     )
     employee_id = fields.Many2one(
         comodel_name='hr.employee', string='Employee', required=True,
-        readonly=True, states={'draft': [('readonly', False)]}
+        states={'locked': [('readonly', True)]}
     )
     template_id = fields.Many2one(
         comodel_name='hr.schedule.template', string='Schedule Template',
-        readonly=True, states={'draft': [('readonly', False)]}
+        states={'locked': [('readonly', True)]}
     )
     detail_ids = fields.One2many(
         comodel_name='hr.schedule.detail', inverse_name='schedule_id',
-        string='Schedule Detail', readonly=True,
-        states={'draft': [('readonly', False)]}, ondelete="cascade"
+        string='Schedule Detail', states={'locked': [('readonly', True)]}
     )
     date_start = fields.Date(
-        string='Start Date', required=True, readonly=True,
-        states={'draft': [('readonly', False)]}
+        string='Start Date', required=True,
+        states={'locked': [('readonly', True)]}
     )
     date_end = fields.Date(
-        string='End Date', required=True, readonly=True,
-        states={'draft': [('readonly', False)]}
+        string='End Date', required=True
     )
     department_id = fields.Many2one(
         comodel_name='hr.department', string='Department',
@@ -81,31 +80,36 @@ class HrSchedule(models.Model):
     )
     restday_ids1 = fields.Many2many(
         comodel_name='hr.schedule.weekday', relation='schedule_restdays_rel1',
-        column1='sched_id', column2='weekday_id', string='Rest Days Week 1'
+        column1='sched_id', column2='weekday_id', string='Rest Days Week 1',
+        states={'locked': [('readonly', True)]}
     )
     restday_ids2 = fields.Many2many(
         comodel_name='hr.schedule.weekday', relation='schedule_restdays_rel2',
-        column1='sched_id', column2='weekday_id', string='Rest Days Week 2'
+        column1='sched_id', column2='weekday_id', string='Rest Days Week 2',
+        states={'locked': [('readonly', True)]}
     )
     restday_ids3 = fields.Many2many(
         comodel_name='hr.schedule.weekday', relation='schedule_restdays_rel3',
-        column1='sched_id', column2='weekday_id', string='Rest Days Week 3'
+        column1='sched_id', column2='weekday_id', string='Rest Days Week 3',
+        states={'locked': [('readonly', True)]}
     )
     restday_ids4 = fields.Many2many(
         comodel_name='hr.schedule.weekday', relation='schedule_restdays_rel4',
-        column1='sched_id', column2='weekday_id', string='Rest Days Week 4'
+        column1='sched_id', column2='weekday_id', string='Rest Days Week 4',
+        states={'locked': [('readonly', True)]}
     )
     restday_ids5 = fields.Many2many(
         comodel_name='hr.schedule.weekday', relation='schedule_restdays_rel5',
-        column1='sched_id', column2='weekday_id', string='Rest Days Week 5'
+        column1='sched_id', column2='weekday_id', string='Rest Days Week 5',
+        states={'locked': [('readonly', True)]}
     )
     state = fields.Selection(
         selection=[
-            ('draft', 'Draft'),
-            ('validate', 'Confirmed'),
-            ('locked', 'Locked'),
-            ('unlocked', 'Unlocked'),
-        ], string='State', required=True, readonly=True, default='draft'
+            ('draft', "Draft"),
+            ('confirmed', "Confirmed"),
+            ('locked', "Locked")
+        ],
+        string="State", readonly=True, default='draft'
     )
 
     @api.model
@@ -117,9 +121,7 @@ class HrSchedule(models.Model):
         ])
 
         if schedules:
-            return _('You cannot have schedules that overlap!')
-        else:
-            return False
+            raise UserError(_('You cannot have schedules that overlap!'))
 
     # TODO: Sin usar????
     # @api.multi  # ?
@@ -243,42 +245,47 @@ class HrSchedule(models.Model):
         return res
 
     @api.multi
+    @api.onchange('date_start')
+    def _onchange_date_start(self):
+        for schedule in self:
+            if schedule.date_start:
+                dt_start = datetime.strptime(
+                    schedule.date_start, DEFAULT_SERVER_DATE_FORMAT
+                )
+                if dt_start.weekday() == 0:
+                    dt_end = dt_start + relativedelta(days=+7)
+                    schedule.date_end = datetime.strftime(
+                        dt_end, DEFAULT_SERVER_DATE_FORMAT
+                    )
+
+    @api.multi
     @api.constrains('employee_id', 'date_start')
     def onchange_employee_start_date(self):
         for schedule in self:
-            res = {}
-            date_start = self.date_start
+            date_start = schedule.date_start
 
             if date_start:
-                date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
+                date_start = datetime.strptime(schedule.date_start, '%Y-%m-%d').date()
                 # The schedule must start on a Monday
                 if date_start.weekday() != 0:
                     raise UserError(_("The starting date of the schedule must start on mondays"))
                 else:
                     date_end = date_start + relativedelta(days=+6)
-                    res['date_end'] = date_end
+                    schedule.date_end = date_end
 
-            if self.employee_id.name:
-                res['name'] = self.employee_id.name
+            if schedule.employee_id.name:
+                schedule.name = schedule.employee_id.name
 
                 if date_start:
-                    res['name'] = "{}: {} Wk {}".format(
-                        self.name,
+                    schedule.name = "{}: {} Wk {}".format(
+                        schedule.name,
                         date_start.strftime('%Y-%m-%d'),
                         str(date_start.isocalendar()[1])
                     )
 
-            if self.employee_id.contract_id:
-                contract = self.employee_id.mapped('contract_id')
-
-                if contract.schedule_template_id:
-                    res['template_id'] = contract[0]['schedule_template_id']
-
-            self.write(res)
-
     @api.multi
     def delete_details(self):
-        self.write({'detail_ids': [6, 0, 0]})
+        self.write({'detail_ids': [(5, 0, 0)]})
 
     @api.multi
     def add_restdays(self, field_name, rest_days=None):
@@ -291,10 +298,10 @@ class HrSchedule(models.Model):
             else:
                 restday_ids = self.env['hr.schedule.weekday'].search([
                     ('sequence', 'in', rest_days)
-                ]).ids
+                ]).mapped('id')
 
             if len(restday_ids) > 0:
-                self.write({
+                schedule.write({
                     field_name: [(6, 0, restday_ids)]
                 })
 
@@ -302,13 +309,13 @@ class HrSchedule(models.Model):
     def create_details(self, schedules):
         leave_obj = self.env['hr.holidays']
 
-        for schedule in schedules.filtered(lambda item: item.template_id):
+        for schedule in schedules.filtered(lambda item: item.template_id and
+                                           item.date_start and item.date_end):
             leaves = []
             leave_ids = leave_obj.search([
                 ('employee_id', '=', schedule.employee_id.id),
                 ('date_from', '<=', schedule.date_end),
-                ('date_to', '>=', schedule.date_start),
-                ('state', 'in', ['draft', 'validate', 'validate1'])
+                ('date_to', '>=', schedule.date_start)
             ])
 
             for lv in leave_ids:
@@ -454,16 +461,25 @@ class HrSchedule(models.Model):
 
         return True
 
+    @api.multi
+    def write(self, vals):
+        result = super(HrSchedule, self).write(vals)
+
+        schedules = self.filtered(
+            lambda schedule: 'template_id' in vals or
+                             'date_start' in vals or 'date_end' in vals
+        )
+        if schedules:
+            self.delete_details()
+            self.create_details(schedules)
+
+        return result
+
     @api.model
     def create(self, vals):
-        error_msg = self._check_overlapping_schedules(vals)
-
-        if error_msg:
-            raise UserError(error_msg)
+        self._check_overlapping_schedules(vals)
 
         result = super(HrSchedule, self).create(vals)
-
-        self.create_details(result)
 
         return result
 
@@ -547,61 +563,19 @@ class HrSchedule(models.Model):
         return super(HrSchedule, self).unlink()
 
     @api.multi
-    def _workflow_common(self, signal, next_state):
-        for schedule in self:
-            for detail in schedule.detail_ids:
-                trg_validate(
-                    self.env.uid, 'hr.schedule.detail', detail.id, signal,
-                    self.env.cr
-                )
-            schedule.write({'state': next_state})
-
-        return True
-
-    def workflow_validate(self):
-        return self._workflow_common('signal_validate', 'validate')
+    def button_confirm(self):
+        self.filtered(lambda schedule: schedule.state == "draft").write({
+            'state': 'confirmed'
+        })
 
     @api.multi
-    def details_locked(self):
-        for schedule in self:
-            for detail in schedule.detail_ids:
-                if detail.state != 'locked':
-                    return False
-
-        return True
+    def button_lock(self):
+        self.filtered(lambda schedule: schedule.state == "confirmed").write({
+            'state': 'locked'
+        })
 
     @api.multi
-    def workflow_lock(self):
-        """
-        Lock the Schedule Record. Expects to be called by its
-        schedule detail records as they are locked one by one.
-        When the last one has been locked the schedule will also be
-        locked.
-        """
-        all_locked = True
-
-        for schedule in self:
-            if self.details_locked():
-                schedule.write({'state': 'locked'})
-            else:
-                all_locked = False
-
-        return all_locked
-
-    def workflow_unlock(self):
-        """
-        Unlock the Schedule Record. Expects to be called by its
-        schedule detail records as they are unlocked one by one.
-        When the first one has been unlocked the schedule will also be
-        unlocked.
-        """
-
-        all_locked = True
-
-        for schedule in self:
-            if not self.details_locked():
-                schedule.write({'state': 'unlocked'})
-            else:
-                all_locked = False
-
-        return all_locked is False
+    def button_draft(self):
+        self.filtered(lambda schedule: schedule.state == "confirmed").write({
+            'state': "draft"
+        })

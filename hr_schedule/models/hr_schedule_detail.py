@@ -5,7 +5,8 @@ from pytz import utc, timezone
 
 from odoo import fields, api, models
 from odoo.workflow import trg_validate
-from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT
+from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT,\
+    DEFAULT_SERVER_DATE_FORMAT
 
 
 DAYOFWEEK_SELECTION = [
@@ -24,21 +25,6 @@ class HrScheduleDetail(models.Model):
     _description = "Schedule Detail"
     _order = 'schedule_id, date_start, dayofweek'
 
-    def _day_compute(self, cr, uid, ids, field_name, args, context=None):
-        res = dict.fromkeys(ids, '')
-        for obj in self.browse(cr, uid, ids, context=context):
-            res[obj.id] = time.strftime(
-                '%Y-%m-%d', time.strptime(obj.date_start, '%Y-%m-%d %H:%M:%S'))
-        return res
-
-    def _get_ids_from_sched(self, cr, uid, ids, context=None):
-        res = []
-        for sched in self.pool.get('hr.schedule').browse(
-                cr, uid, ids, context=context):
-            for detail in sched.detail_ids:
-                res.append(detail.id)
-        return res
-
     name = fields.Char(
         string="Name", size=64, required=True,
     )
@@ -53,10 +39,11 @@ class HrScheduleDetail(models.Model):
         string='End Date and Time', required=True,
     )
     day = fields.Date(
-        string='Day', required=True, select=1
+        string='Day', required=True
     )
     schedule_id = fields.Many2one(
-        comodel_name='hr.schedule', string='Schedule', required=True
+        comodel_name='hr.schedule', string='Schedule', required=True,
+        ondelete="cascade"
     )
     department_id = fields.Many2one(
         comodel_name='hr.department', related='schedule_id.department_id',
@@ -78,6 +65,19 @@ class HrScheduleDetail(models.Model):
             ('unlocked', 'Unlocked'),
         ], string='State', required=True, readonly=True, default="draft"
     )
+    utc_day = fields.Date(
+        string="UTC Date", required=True,
+        readonly=True, index=True
+    )
+
+    @api.multi
+    @api.depends('date_start', 'date_end')
+    def _change_day(self):
+        for detail in self:
+            if detail.date_start and detail.date_end:
+                detail.day = detail.date_start.strftime(
+                    DEFAULT_SERVER_DATE_FORMAT
+                )
 
     @api.model
     def _detail_date(self):
@@ -98,11 +98,6 @@ WHERE (date_start <= %s and %s <= date_end)
                 return False
 
         return True
-
-    _constraints = [
-        (_detail_date, 'You cannot have scheduled days that overlap!',
-         ['date_start', 'date_end']),
-    ]
 
     @api.model
     def scheduled_hours_on_day(self, employee_id, contract_id, dt):
@@ -249,16 +244,16 @@ WHERE (date_start <= %s and %s <= date_end)
     def create(self, vals):
         local_tz = utc if not self.env.user.tz else timezone(self.env.user.tz)
 
-        if 'day' not in vals and 'date_start' in vals:
-            # TODO - Someone affected by DST should fix this
-            #
-            dt_start = datetime.strptime(
-                vals['date_start'], DEFAULT_SERVER_DATETIME_FORMAT
-            )
-            local_dt_start = local_tz.localize(dt_start, is_dst=False)
-            utc_dt_start = local_dt_start.astimezone(utc)
-            day_date = utc_dt_start.astimezone(local_tz).date()
-            vals['day'] = day_date
+        # TODO - Someone affected by DST should fix this
+        #
+        dt_start = datetime.strptime(
+            vals['date_start'], DEFAULT_SERVER_DATETIME_FORMAT
+        )
+        local_dt_start = local_tz.localize(dt_start, is_dst=False)
+        utc_dt_start = local_dt_start.astimezone(utc)
+        day_date = utc_dt_start.astimezone(local_tz).date()
+        vals['day'] = day_date
+        vals['utc_day'] = utc_dt_start
 
         res = super(HrScheduleDetail, self).create(
             vals

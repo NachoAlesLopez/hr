@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
-from dateutil import relativedelta
+from dateutil.relativedelta import relativedelta
 from pytz import timezone, utc
 
 from odoo import fields, api, models
+from odoo.tools import DEFAULT_SERVER_DATE_FORMAT
 
 
 class HrAttendance(models.Model):
@@ -28,10 +29,16 @@ class HrAttendance(models.Model):
 
         for attendance in self:
             alerts = alerts + attendance.alert_ids
-            key = str(attendance.employee_id.id) + attendance.day
-            if key not in attendance_keys:
-                attendances.append((attendance.employee_id, attendance.day))
-                attendance_keys.append(key)
+            key_in = str(attendance.employee_id.id) + attendance.check_in
+            key_out = str(attendance.employee_id.id) + attendance.check_out
+            if key_in not in attendance_keys or key_out not in attendance_keys:
+                attendances.append(
+                    (attendance.employee_id, attendance.check_in)
+                )
+                if key_in not in attendance_keys:
+                    attendance_keys.append(key_in)
+                else:
+                    attendance_keys.append(key_out)
 
         if len(alerts) > 0:
             alerts.unlink()
@@ -50,13 +57,15 @@ class HrAttendance(models.Model):
         for employee, str_day in attendances:
             # Today's records will be checked tomorrow. Future records can't
             # generate alerts.
-            if str_day >= fields.Date.context_today():
+            if str_day >= fields.Date.context_today(self):
                 continue
 
             # TODO - Someone who cares about DST should fix this
             #
             local_tz = utc if not self.env.user.tz else timezone(self.env.user.tz)
-            dt = datetime.strptime(str_day + ' 00:00:00', '%Y-%m-%d %H:%M:%S')
+            dt = datetime.strptime(
+                str_day[0:9], DEFAULT_SERVER_DATE_FORMAT
+            )
             local_dt = local_tz.localize(dt, is_dst=False)
             utc_dt = local_dt.astimezone(utc)
             utc_dt_next_day = utc_dt + relativedelta(days=+1)
@@ -64,12 +73,12 @@ class HrAttendance(models.Model):
             str_next_day = utc_dt_next_day.strftime('%Y-%m-%d %H:%M:%S')
 
             alerts = alert_obj.search([
-                ('employee_id', '=', employee),
+                ('employee_id', '=', employee.id),
                 '&',
                 ('name', '>=', str_day_start),
                 ('name', '<', str_next_day)
             ])
-            alerts.unlink(alerts)
+            alerts.unlink()
             alerts.compute_alerts_by_employee(employee, str_day)
 
     @api.model
@@ -78,7 +87,7 @@ class HrAttendance(models.Model):
 
         attendances = [
             (
-                res.employee_id, fields.Date.context_today()
+                res.employee_id, fields.Date.context_today(self)
             )
         ]
         res._recompute_alerts(attendances)

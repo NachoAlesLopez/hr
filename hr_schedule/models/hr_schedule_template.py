@@ -25,6 +25,10 @@ class HrScheduleTemplate(models.Model):
         relation='schedule_template_restdays_rel', column1='sched_id',
         column2='weekday_id', string='Rest Days'
     )
+    schedule_ids = fields.One2many(
+        comodel_name="hr.schedule", inverse_name="template_id",
+        readonly=1, string="Schedules"
+    )
 
     @api.multi
     def get_rest_days(self):

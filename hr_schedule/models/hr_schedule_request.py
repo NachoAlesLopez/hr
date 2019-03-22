@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from odoo import fields, models
+from odoo import fields, api, models
 
 
 class HrScheduleRequest(models.Model):
@@ -33,3 +33,16 @@ class HrScheduleRequest(models.Model):
             ('cancel', 'Cancelled'),
         ], string='State', required=True, readonly=True, default='pending'
     )
+
+    name = fields.Char(
+        string="Name", compute="_compute_name", store=True
+    )
+
+    @api.multi
+    @api.depends('employee_id', 'date', 'type')
+    def _compute_name(self):
+        for request in self:
+            request.name = "{employee} {type} ({date})".format(
+                employee=request.employee_id.name, type=request.type,
+                date=request.date
+            )

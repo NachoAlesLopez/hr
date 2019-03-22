@@ -48,7 +48,7 @@
 
     <menuitem id="menu_restday_change"
               action="action_restday_change"
-              parent="hr.menu_hr_main"
+              parent="hr.menu_human_resources_configuration"
               groups="hr.group_hr_user"
               sequence="170"/>
 </odoo>

@@ -44,7 +44,7 @@
 
     <record id="alert_rule_lvearly" model="hr.schedule.alert.rule">
         <field name="name">Out Early</field>
-        <field name="code">OUTEARLY</field>
+        <field name="code">LVEARLYs</field>
         <field name="severity">medium</field>
         <field name="grace_period">10</field>
         <field name="window">120</field>

@@ -45,29 +45,18 @@ class HrScheduleAlertRule(models.Model):
         }
 
         if rule.code == 'MISSPUNCH':
-            prev = False
-
-            for punch in punches:
-                if not prev:
-                    prev = punch
-                    if punch.action != 'sign_in':
-                        res['punches'].append((punch.name, punch.id))
-                elif prev.action == 'sign_in':
-                    if punch.action != 'sign_out':
-                        res['punches'].append((punch.name, punch.id))
-                elif prev.action == 'sign_out':
-                    if punch.action != 'sign_in':
-                        res['punches'].append((punch.name, punch.id))
-                prev = punch
-
-            if len(punches) > 0 and prev.action != 'sign_out':
+            # Se le olvida hacer "salida" o "entrada" cuando debe.
+            for punch in punches.filtered(
+                lambda att: not att.check_in and att.check_out
+            ):
                 res['punches'].append((punch.name, punch.id))
         elif rule.code == 'UNSCHEDATT':
             for punch in punches:
-                if punch.action == 'sign_in':
-                    is_match = False
+                is_match = False
+
+                for punch_type in ['check_in', 'check_out']:
                     dt_punch = datetime.strptime(
-                        punch.name, '%Y-%m-%d %H:%M:%S'
+                        punch[punch_type], '%Y-%m-%d %H:%M:%S'
                     )
 
                     for detail in schedule_details:
@@ -86,9 +75,11 @@ class HrScheduleAlertRule(models.Model):
                         if difference < rule.window:
                             is_match = True
                             break
+                    if is_match:
+                        break
 
-                    if not is_match:
-                        res['punches'].append((punch.name, punch.id))
+                if not is_match:
+                    res['punches'].append((punch[punch_type], punch.id))
         elif rule.code == 'MISSATT':
             if len(schedule_details) > len(punches):
                 for detail in schedule_details:
@@ -130,22 +121,22 @@ class HrScheduleAlertRule(models.Model):
                 schedule_hours += \
                     float((dt_end - dt_start).seconds / 60) / 60.0
 
-            dt_start = False
-
             for punch in punches:
-                if punch.action == 'sign_in':
-                    dt_start = datetime.strptime(
-                        punch.name, '%Y-%m-%d %H:%M:%S'
-                    )
-                elif punch.action == 'sign_out':
-                    dt_end = datetime.strptime(punch.name, '%Y-%m-%d %H:%M:%S')
-                    actual_hours += float(
-                        (dt_end - dt_start).seconds / 60) / 60.0
+                dt_start = datetime.strptime(
+                    punch.check_in, DEFAULT_SERVER_DATETIME_FORMAT
+                )
+                dt_end = datetime.strptime(
+                    punch.check_out, DEFAULT_SERVER_DATETIME_FORMAT
+                )
 
-                    # TODO Puede que haga falta cambiar esto,
-                    # hardcoded a 8 horas al día
-                    if actual_hours > 8 >= schedule_hours:
-                        res['punches'].append((punch.name, punch.id))
+                actual_hours += float(
+                    (dt_end - dt_start).seconds / 60
+                ) / 60.0
+
+                # TODO Puede que haga falta cambiar esto,
+                # hardcoded a 8 horas al día
+            if actual_hours >= schedule_hours and len(punches) > 0:
+                res['punches'].append((punches[0].check_in, punch.id))
         elif rule.code == 'TARDY':
             for detail in schedule_details:
                 is_match = False
@@ -154,9 +145,9 @@ class HrScheduleAlertRule(models.Model):
                 )
 
                 for punch in punches:
-                    if punch.action == 'sign_in':
+                    if punch.check_in:
                         dt_punch = datetime.strptime(
-                            punch.name, '%Y-%m-%d %H:%M:%S'
+                            punch.check_in, '%Y-%m-%d %H:%M:%S'
                         )
                         difference = 0
 
@@ -167,7 +158,7 @@ class HrScheduleAlertRule(models.Model):
                             break
 
                 if is_match:
-                    res['punches'].append((punch.name, punch.id))
+                    res['punches'].append((punch.check_in, punch.id))
         elif rule.code == 'LVEARLY':
             for detail in schedule_details:
                 is_match = False
@@ -176,9 +167,9 @@ class HrScheduleAlertRule(models.Model):
                 )
 
                 for punch in punches:
-                    if punch.action == 'sign_out':
+                    if punch.check_out:
                         dt_punch = datetime.strptime(
-                            punch.name, '%Y-%m-%d %H:%M:%S'
+                            punch.check_out, '%Y-%m-%d %H:%M:%S'
                         )
                         difference = 0
 
@@ -189,7 +180,7 @@ class HrScheduleAlertRule(models.Model):
                             break
 
                 if is_match:
-                    res['punches'].append((punch.name, punch.id))
+                    res['punches'].append((punch.check_out, punch.id))
         elif rule.code == 'INEARLY':
             for detail in schedule_details:
                 is_match = False
@@ -198,9 +189,9 @@ class HrScheduleAlertRule(models.Model):
                 )
 
                 for punch in punches:
-                    if punch.action == 'sign_in':
+                    if punch.check_in:
                         dt_punch = datetime.strptime(
-                            punch.name, '%Y-%m-%d %H:%M:%S'
+                            punch.check_in, '%Y-%m-%d %H:%M:%S'
                         )
                         difference = 0
 
@@ -211,7 +202,7 @@ class HrScheduleAlertRule(models.Model):
                             break
 
                 if is_match:
-                    res['punches'].append((punch.name, punch.id))
+                    res['punches'].append((punch.check_in, punch.id))
         elif rule.code == 'OUTLATE':
             for detail in schedule_details:
                 is_match = False
@@ -220,9 +211,9 @@ class HrScheduleAlertRule(models.Model):
                 )
 
                 for punch in punches:
-                    if punch.action == 'sign_out':
+                    if punch.check_out:
                         dt_punch = datetime.strptime(
-                            punch.name, '%Y-%m-%d %H:%M:%S'
+                            punch.check_out, '%Y-%m-%d %H:%M:%S'
                         )
                         difference = 0
 
@@ -233,29 +224,30 @@ class HrScheduleAlertRule(models.Model):
                             break
 
                 if is_match:
-                    res['punches'].append((punch.name, punch.id))
+                    res['punches'].append((punch.check_out, punch.id))
         elif rule.code == 'OVRLP':
-            leave_obj = self.pool.get('hr.holidays')
+            leave_obj = self.env['hr.holidays']
 
             for punch in punches:
-                if punch.action == 'sign_in':
-                    dt_start = datetime.strptime(
-                        punch.name, '%Y-%m-%d %H:%M:%S'
-                    )
-                elif punch.action == 'sign_out':
-                    dt_end = datetime.strptime(punch.name, '%Y-%m-%d %H:%M:%S')
-                    leaves = leave_obj.search([
-                        ('employee_id', '=', punch.employee_id.id),
-                        ('type', '=', 'remove'),
-                        ('date_from', '<=', dt_end.strftime(
-                            DEFAULT_SERVER_DATETIME_FORMAT)),
-                        ('date_to', '>=', dt_start.strftime(
-                            DEFAULT_SERVER_DATETIME_FORMAT)),
-                        ('state', 'in', ['validate', 'validate1'])
-                    ])
-                    if len(leaves) > 0:
-                        res['punches'].append((punch.name, punch.id))
-                        break
+                dt_start = datetime.strptime(
+                    punch.check_in, DEFAULT_SERVER_DATETIME_FORMAT
+                )
+                dt_end = datetime.strptime(
+                    punch.check_out, DEFAULT_SERVER_DATETIME_FORMAT
+                )
+
+                leaves = leave_obj.search([
+                    ('employee_id', '=', punch.employee_id.id),
+                    ('type', '=', 'remove'),
+                    ('date_from', '<=', dt_end.strftime(
+                        DEFAULT_SERVER_DATETIME_FORMAT)),
+                    ('date_to', '>=', dt_start.strftime(
+                        DEFAULT_SERVER_DATETIME_FORMAT)),
+                    ('state', 'in', ['validate', 'validate1'])
+                ])
+                if len(leaves) > 0:
+                    res['punches'].append((punch.check_in, punch.id))
+                    break
 
         return res
 

@@ -48,13 +48,15 @@ class WizardComputeAlerts(models.TransientModel):
 
         date_start = datetime.strptime(self.date_start, '%Y-%m-%d').date()
         date_end = datetime.strptime(self.date_end, '%Y-%m-%d').date()
-        date_today = datetime.strptime(fields.Date.context_today(self), '%Y-%m-%d')\
-            .date()
+        date_today = datetime.strptime(
+            fields.Date.context_today(self), '%Y-%m-%d'
+        ).date()
 
         if date_today < date_end:
             date_end = date_today
 
         date_next = date_start
+
         for employee in self.employee_ids:
             while date_next <= date_end:
                 alert_obj.compute_alerts_by_employee(

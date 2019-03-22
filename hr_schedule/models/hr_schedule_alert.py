@@ -4,7 +4,7 @@ from dateutil.relativedelta import relativedelta
 from pytz import timezone, utc
 
 from odoo import fields, api, models
-from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT
+from odoo.tools import DEFAULT_SERVER_DATE_FORMAT
 
 
 class HrScheduleAlert(models.Model):
@@ -171,50 +171,54 @@ class HrScheduleAlert(models.Model):
                             'sched_detail_id': detail_id,
                         })
 
-    @api.model
-    def _get_normalized_attendance(self, employee, utc_dt, attendances):
-        attendance_obj = self.env['hr.attendance']
-        str_date_today = utc_dt.strftime(DEFAULT_SERVER_DATETIME_FORMAT)
-
-        # If the first punch is a punch-out then get the corresponding punch-in
-        # from the previous day.
-        #
-        if len(attendances) > 0 and attendances[0].action != 'sign_in':
-            str_date_yesterday = (
-                utc_dt - timedelta(days=+1)
-            ).strftime(DEFAULT_SERVER_DATETIME_FORMAT)
-            yesterday_attendances = attendance_obj.search([
-                ('employee', '=', employee),
-                '&',
-                ('name', '>=', str_date_yesterday),
-                ('name', '<', str_date_today)
-            ])
-
-            if len(yesterday_attendances) > 0 and yesterday_attendances[-1].action == 'sign_in':
-                attendances = [yesterday_attendances[-1].id] + attendances
-            else:
-                attendances = attendances[1:]
-
-        # If the last punch is a punch-in then get the corresponding punch-out
-        # from the next day.
-        #
-        if len(attendances) > 0 and attendances[-1].action != 'sign_out':
-            str_tomorrow = (
-                utc_dt + timedelta(days=1)
-            ).strftime(DEFAULT_SERVER_DATETIME_FORMAT)
-            tomorrow_attendances = attendance_obj.search([
-                ('employee', '=', employee),
-                '&',
-                ('name', '>=', str_date_today),
-                ('name', '<', str_tomorrow)
-            ])
-
-            if len(tomorrow_attendances) > 0 and tomorrow_attendances[0].action == 'sign_out':
-                attendances = attendances + [tomorrow_attendances[0].id]
-            else:
-                attendances = attendances[:-1]
-
-        return attendances
+    # TODO Eliminar este método. Es posible que no haga falta ya que se
+    # TODO gestiona de forma diferente las asistencias.
+    # @api.model
+    # def _get_normalized_attendance(self, employee, utc_dt, attendances):
+    #     attendance_obj = self.env['hr.attendance']
+    #     str_date_today = utc_dt.strftime(DEFAULT_SERVER_DATETIME_FORMAT)
+    #
+    #     # If the first punch is a punch-out then get the corresponding punch-in
+    #     # from the previous day.
+    #     #
+    #     if len(attendances) > 0 and attendances[0].check_out:
+    #         str_date_yesterday = (
+    #             utc_dt - timedelta(days=+1)
+    #         ).strftime(DEFAULT_SERVER_DATETIME_FORMAT)
+    #         yesterday_attendances = attendance_obj.search([
+    #             ('employee_id', '=', employee.id),
+    #             '&',
+    #             ('check_in', '>=', str_date_yesterday),
+    #             ('check_in', '<', str_date_today)
+    #         ])
+    #
+    #         if len(yesterday_attendances) > 0 and \
+    #                 yesterday_attendances[-1].check_in:
+    #             attendances = [yesterday_attendances[-1].id] + attendances
+    #         else:
+    #             attendances = attendances[1:]
+    #
+    #     # If the last punch is a punch-in then get the corresponding punch-out
+    #     # from the next day.
+    #     #
+    #     if len(attendances) > 0 and attendances[-1].check_out:
+    #         str_tomorrow = (
+    #             utc_dt + timedelta(days=+1)
+    #         ).strftime(DEFAULT_SERVER_DATETIME_FORMAT)
+    #         tomorrow_attendances = attendance_obj.search([
+    #             ('employee_id', '=', employee.id),
+    #             '&',
+    #             ('check_out', '>=', str_date_today),
+    #             ('check_out', '<', str_tomorrow)
+    #         ])
+    #
+    #         if len(tomorrow_attendances) > 0 and \
+    #                 tomorrow_attendances[0].check_out:
+    #             attendances = attendances + [tomorrow_attendances[0].id]
+    #         else:
+    #             attendances = attendances[:-1]
+    #
+    #     return attendances
 
     @api.model
     def compute_alerts_by_employee(self, employee, str_date):
@@ -228,7 +232,7 @@ class HrScheduleAlert(models.Model):
 
         # TODO - Someone who cares about DST should fix ths
         #
-        dt = datetime.strptime(str_date + ' 00:00:00', '%Y-%m-%d %H:%M:%S')
+        dt = datetime.strptime(str_date, DEFAULT_SERVER_DATE_FORMAT)
         local_dt = local_tz.localize(dt, is_dst=False)
         utc_dt = local_dt.astimezone(utc)
         utc_dt_next_day = utc_dt + relativedelta(days=+1)
@@ -239,9 +243,8 @@ class HrScheduleAlert(models.Model):
         #
         schedule_details = detail_obj.search([
             ('schedule_id.employee_id', '=', employee.id),
-            '&',
-            ('day', '>=', str_today),
-            ('day', '<', str_next_day),
+            ('day', '>', str_today),
+            ('day', '<=', str_next_day)
         ], order='date_start')
         attendances = atnd_obj.search([
             ('employee_id', '=', employee.id),
@@ -249,10 +252,6 @@ class HrScheduleAlert(models.Model):
             ('check_in', '>=', str_today),
             ('check_in', '<', str_next_day),
         ], order='check_in')
-
-        attendances = self._get_normalized_attendance(
-            employee, utc_dt, attendances
-        )
 
         # Run the schedule and attendance records against each active rule, and
         # create alerts for each result returned.
@@ -263,20 +262,23 @@ class HrScheduleAlert(models.Model):
                 rule, schedule_details, attendances
             )
 
-            for str_dt, attendance in res['punches']:
+            for str_dt, attendance_id in res['punches']:
                 # skip if it has already been triggered
                 ids = self.search([
-                    ('punch_id', '=', attendance.id),
+                    ('punch_id', '=', attendance_id),
                     ('rule_id', '=', rule.id),
                     ('name', '=', str_dt),
                 ])
                 if len(ids) > 0:
                     continue
+                attendance = self.env['hr.attendance'].browse(attendance_id)
 
                 self.create({
                     'name': str_dt,
+                    'employee_id': attendance.employee_id.id,
+                    'department_id': attendance.employee_id.department_id,
                     'rule_id': rule.id,
-                    'punch_id': attendance
+                    'punch_id': attendance_id
                 })
 
             for str_dt, detail_id in res['schedule_details']:
