@@ -89,26 +89,26 @@ class HrScheduleAlertRule(models.Model):
                     )
 
                     for punch in punches:
-                        if punch.action == 'sign_in':
-                            dt_punch = datetime.strptime(
-                                punch.name, '%Y-%m-%d %H:%M:%S'
-                            )
-                            difference = 0
+                        dt_punch = datetime.strptime(
+                            punch.check_in, '%Y-%m-%d %H:%M:%S'
+                        )
+                        difference = 0
 
-                            if dt_schedule >= dt_punch:
-                                difference = \
-                                    (dt_schedule - dt_punch).seconds / 60
-                            else:
-                                difference = \
-                                    (dt_punch - dt_schedule).seconds / 60
+                        if dt_schedule >= dt_punch:
+                            difference = \
+                                (dt_schedule - dt_punch).seconds / 60
+                        else:
+                            difference = \
+                                (dt_punch - dt_schedule).seconds / 60
 
-                            if difference < rule.window:
-                                is_match = True
-                                break
+                        if difference < rule.window:
+                            is_match = True
+                            break
 
                     if not is_match:
                         res['schedule_details'].append(
                             (detail.date_start, detail.id))
+
         elif rule.code == 'UNSCHEDOT':
             actual_hours = 0
             schedule_hours = 0
